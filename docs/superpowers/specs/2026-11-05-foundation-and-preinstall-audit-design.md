@@ -100,7 +100,14 @@ RLS everywhere, no secrets in repo (`.env.example` only), signed URLs for photos
 - Supabase project access/credentials needed for live integration; until then, DB tests run against local Postgres if installable.
 - Tolerance values and template content must come from the company; sample templates are clearly labeled examples.
 
-## 12. Open items
+## 12. Company decisions (from owner, 2026-11-06)
+
+- **Critical (stop-gate) items:** only MEP rough-in conflicts (plumbing rough-ins, outlets/switches/junction boxes, appliance connections, HVAC registers, sprinklers, other obstructions vs. approved drawing/appliance specs). A FAIL on any of these sets NOT READY. All other items are non-critical: a FAIL/REVIEW yields Ready With Exceptions or Manager Review Required per template config, never an automatic block.
+- **Tolerance-checked measurements:** wall length and ceiling height. Expected value comes from the approved drawing for that room/elevation; the allowed +/- is company/project configured.
+- **Not tolerance-gated:** wall plumb, wall flatness, floor levelness. These remain optional observation items (note and/or photo, no PASS/FAIL), configurable per template.
+- The template engine still supports tolerance on any item, so these choices are template data, not code.
+
+## 13. Open items
 
 - Supabase project to use (new vs existing) — needs user input.
-- Company-specific tolerances and critical-item designations.
+- Allowed +/- values for wall length and ceiling height (and whether a REVIEW band applies). Until provided, the seed template leaves them unset and such items require a manual outcome.
