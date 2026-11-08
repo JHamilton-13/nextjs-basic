@@ -14,7 +14,7 @@ function Details({ pairs }: { pairs: { key: string; label: string; value: string
 }
 
 /** One room: its details (read-only) and the completion checklist (tap a pill to mark it done). */
-export function RoomCard({ ctx, room, checks, issues, queue }: { ctx: AppCtx; room: RoomRow; checks: LocalRoomCheck[]; issues: LocalIssue[]; queue: OutboxRecord[] }) {
+export function RoomCard({ ctx, room, checks, issues, queue, collapsed = false, onToggle }: { ctx: AppCtx; room: RoomRow; checks: LocalRoomCheck[]; issues: LocalIssue[]; queue: OutboxRecord[]; collapsed?: boolean; onToggle?: () => void }) {
   const [open, setOpen] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const [note, setNote] = useState("");
@@ -24,6 +24,7 @@ export function RoomCard({ ctx, room, checks, issues, queue }: { ctx: AppCtx; ro
   const attention = queue.some((q) => q.op.entity === "room_check" && (q.state.status === "conflict" || (q.state.status === "failed" && !q.state.retryable)));
   const card = fieldsFor(room.details, CARD_FIELDS);
   const more = fieldsFor(room.details, MORE_FIELDS);
+  const openIssues = issues.filter((i) => !i.voidedAt && !i.completedAt).length;
 
   const cctx = { db: ctx.db, userId: ctx.identity.userId, userLabel: ctx.identity.label, newId: () => crypto.randomUUID(), now: () => new Date().toISOString(), notify: () => ctx.outbox.notify() };
   async function set(itemKey: string, state: CheckState | "clear", text?: string) {
@@ -42,13 +43,17 @@ export function RoomCard({ ctx, room, checks, issues, queue }: { ctx: AppCtx; ro
   const sel = open ? byKey.get(open) : undefined;
 
   return (
-    <section className="card room" data-testid="room-card" data-room={room.name}>
+    <section className="card room" data-testid="room-card" data-room={room.name} data-collapsed={collapsed ? "yes" : "no"}>
       <header className="roomhead">
-        <h2>{room.name}</h2>
+        <button className="roomtoggle" aria-expanded={!collapsed} onClick={onToggle} data-testid="room-toggle" aria-label={`${room.name}, ${collapsed ? "collapsed" : "expanded"}. Tap to ${collapsed ? "expand" : "collapse"}`}>
+          <span className="chev" aria-hidden="true">{collapsed ? "▸" : "▾"}</span><h2>{room.name}</h2>
+        </button>
+        {collapsed && openIssues > 0 && <span className="chip gray" data-testid="room-open-issues">{openIssues} open {openIssues === 1 ? "issue" : "issues"}</span>}
         <span className={`chip ${attention ? "bad" : prog.complete === prog.total ? "good" : prog.notDone > 0 ? "warn" : "gray"}`} data-testid="room-progress">
           {attention ? "needs attention" : `${prog.complete}/${prog.total}`}
         </span>
       </header>
+      <div hidden={collapsed} data-testid="room-body">
       {card.length > 0 ? <Details pairs={card} /> : <p className="muted small">No room details yet.</p>}
       {more.length > 0 && <details><summary>More details</summary><Details pairs={more} /></details>}
       {room.details_source && card.length + more.length > 0 && <p className="muted small">Details from {SOURCE[room.details_source] ?? room.details_source}.</p>}
@@ -94,6 +99,7 @@ export function RoomCard({ ctx, room, checks, issues, queue }: { ctx: AppCtx; ro
         <p className="notdone-note" key={c.itemKey} data-testid="notdone-line"><strong>{ROOM_CHECK_ITEMS.find((i) => i.key === c.itemKey)?.label}:</strong> {c.note} <small className="muted">— {c.by ?? "someone"}, {fmtWhen(c.at)}</small></p>
       ))}
       <IssueSection ctx={ctx} room={room} issues={issues} queue={queue} />
+      </div>
     </section>
   );
 }

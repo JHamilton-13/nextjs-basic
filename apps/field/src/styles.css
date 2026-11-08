@@ -63,6 +63,8 @@ summary::before { content: "▸"; display: inline-block; width: 1.1em; transitio
 @media (max-width: 360px) { .bar strong { display: none; } .bar { flex-wrap: nowrap; } }
 /* ---- rooms, details and the completion checklist ---- */
 .roomhead { display: flex; align-items: center; justify-content: space-between; gap: .5rem; } .roomhead h2 { margin: 0; }
+.roomtoggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: .5rem; min-height: 48px; padding: 0; border: 0; background: none; text-align: left; color: var(--ink); cursor: pointer; }
+.roomtoggle .chev { color: var(--info); font-size: 1.1rem; width: 1.1em; }
 .spec { display: flex; flex-wrap: wrap; gap: .15rem 1rem; margin: .5rem 0; font-size: .9rem; } .spec > div { display: flex; gap: .35rem; }
 .spec dt { color: var(--gray); } .spec dd { margin: 0; font-weight: 700; } .spec dd.tbd { color: var(--warn); }
 .pills { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 .25rem; }

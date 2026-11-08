@@ -45,6 +45,22 @@ async function waitFor(fn, what, ms = 15000) { const t = Date.now(); for (;;) { 
     await page.getByTestId("room-card").first().waitFor();
     check((await page.getByTestId("room-card").count()) === 2, "installer build: both rooms are listed with their cards");
     check(!/audit|measurement|tolerance|critical|MEP/i.test(await page.locator("main").innerText()), "installer build: no audit, measurement or tolerance wording on the room screen");
+    // ---- rooms fold away ----
+    const kRoom = page.locator('[data-room="Kitchen"]'), bRoom = page.locator('[data-room="Bath 1"]');
+    const tbox = await kRoom.getByTestId("room-toggle").boundingBox();
+    check(tbox.height >= 44, `rooms: the room header is at least 44 px tall (${Math.round(tbox.height)})`);
+    check((await kRoom.getByTestId("room-toggle").getAttribute("aria-expanded")) === "true" && (await kRoom.getByTestId("pill-clean").isVisible()), "rooms: open by default, checklist visible");
+    await kRoom.getByTestId("room-toggle").tap();
+    check((await kRoom.getByTestId("pill-clean").isHidden()) && (await kRoom.getByTestId("room-progress").isVisible()) && (await kRoom.getByTestId("room-toggle").getAttribute("aria-expanded")) === "false", "rooms: tapping the name folds the room away but keeps its name and progress");
+    check((await kRoom.getByTestId("room-open-issues").innerText()).includes("1 open issue"), "rooms: a folded room still shows how many issues are open");
+    check(await bRoom.getByTestId("pill-clean").isVisible(), "rooms: folding one room leaves the others open");
+    await page.reload(); await page.getByTestId("project-card").waitFor(); await page.getByTestId("open-project").tap(); await kRoom.waitFor();
+    check((await kRoom.getByTestId("room-card").count()) === 0 && (await page.locator('[data-room="Kitchen"]').getAttribute("data-collapsed")) === "yes", "rooms: a folded room stays folded after reload (remembered on this phone)");
+    await page.getByTestId("expand-all").tap();
+    check((await kRoom.getByTestId("pill-clean").isVisible()) && (await bRoom.getByTestId("pill-clean").isVisible()), "rooms: Expand all opens every room");
+    await page.getByTestId("collapse-all").tap();
+    check((await kRoom.getByTestId("pill-clean").isHidden()) && (await bRoom.getByTestId("pill-clean").isHidden()), "rooms: Collapse all folds every room");
+    await page.getByTestId("expand-all").tap();
     const kitchen = page.locator('[data-room="Kitchen"]');
     await kitchen.getByTestId("pill-clean").tap();
     await waitFor(async () => (await kitchen.getByTestId("pill-clean").getAttribute("data-state")) === "done", "tick");
