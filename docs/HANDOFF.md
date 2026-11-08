@@ -38,7 +38,7 @@ with pen / highlighter / text / eraser, revise, submit). It is kept behind a swi
 
 **Database (live), migrations applied:** 0100 to 0900 (foundation), 1000 (photo size check), 1100 (annotations, who/when, offline revise),
 1200 (room details), 1300 (room checklist), 1400 (room issues with photos).
-**Drafted, NOT applied, waiting for your approval:** 1500 (lock down `confirm_issue_photo` so signed-out callers cannot execute it; no data was exposed).
+**Also applied:** 1500 (locks down `confirm_issue_photo` so signed-out callers cannot execute it; no data was ever exposed). Nothing is waiting for approval.
 
 **Not built yet:** the Add Issue / missing part / damaged part screens (the database for them is applied), part requests,
 room and job sign-off, client signature, PDF report, email, manager dashboard, release/override screens, notifications, imports from
@@ -130,7 +130,7 @@ I have given my recommendation for each so you can answer quickly.
 - iOS Safari cannot be tested in the build environment (storage clearing, camera and HEIC photos, keyboard, install flow). Needs real iPhone testing.
 - No conflict-resolution screen: a conflicting change shows "needs attention" on the room and does not overwrite.
 - No notification inbox and no emails are sent yet (an outbox table exists).
-- Supabase advisor leftovers: unindexed foreign keys and some policy tuning (performance, not correctness); "leaked password protection" warning is irrelevant (no passwords are used). `anon` can execute `confirm_issue_photo` until migration 1500 is applied.
+- Supabase advisor leftovers: unindexed foreign keys and some policy tuning (performance, not correctness); "leaked password protection" warning is irrelevant (no passwords are used). The remaining advisor warnings are intentional (signed-in users call the sync and photo functions by design).
 - Supervisor approval items are rejected (not implemented). Room details are entered by hand only.
 - The preview address changes if the Vercel project is renamed; Supabase's Auth URL list must contain the final address.
 
@@ -143,7 +143,7 @@ I keep `docs/MILESTONES.md` and `docs/testing/` up to date. I never claim someth
 
 Open Claude Code on repo `JHamilton-13/nextjs-basic`, branch `claude/foundation-audit-spec`. Useful first message:
 
-> Read docs/HANDOFF.md, docs/MILESTONES.md and docs/DATABASE_SCHEMA.md. Here are my answers to the open questions: [paste]. Apply migration 1500 if I say so, then build the Add Issue screens (kinds, photos, markup, per-room lists) and tests.
+> Read docs/HANDOFF.md, docs/MILESTONES.md and docs/DATABASE_SCHEMA.md. Here are my answers to the open questions: [paste]. Then build the Add Issue screens (kinds, photos, markup, per-room lists) and tests.
 
 Commands (from the repo root): `npm run test -w @phc/field`, `npm run test -w @phc/domain`, `bash supabase/tests/run.sh` (local database tests, nothing remote),
 `npm run e2e:phone -w @phc/field`, `npm run e2e -w @phc/field`, `npm run e2e:installer -w @phc/field`.
@@ -151,7 +151,6 @@ Claude Code needs these connections: GitHub (this repo), Supabase, Vercel (all a
 
 ## 10. Immediate next steps when you return
 
-1. Say "apply 1500" (or not) to lock down the one function.
-2. Settle sections 6A and 6B (issues, parts) so the Add Issue and part-request screens can be built once.
-3. Run the real-phone script at the end of `docs/testing/phone-trial.md` on an iPhone and an Android and send back screenshots.
-4. Decide when to delete the trial data and when to merge PR #1.
+1. Settle sections 6A and 6B (issues, parts) so the Add Issue and part-request screens can be built once.
+2. Run the real-phone script at the end of `docs/testing/phone-trial.md` on an iPhone and an Android and send back screenshots.
+3. Decide when to delete the trial data and when to merge PR #1.
