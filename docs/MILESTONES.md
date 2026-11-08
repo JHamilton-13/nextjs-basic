@@ -71,8 +71,8 @@ Reports screen in `apps/field` (managers only), server function `api/reports.mjs
 ## Step 12: reports trial on the real phone and database (script written; awaiting the owner's run)
 `docs/testing/reports-trial.md`. Parts A, B and D need only the preview; part C needs the Vercel email settings (`docs/ops/gmail-send-setup.md`) and the owner's separate yes for the one real test email to the owner's own mailbox.
 
-## Step 13: collapsible rooms, build on open, keep latest sent/printed report, Cockpit mapping (built and tested; MIGRATION 1800 NOT APPLIED)
-`docs/testing/step13-keep-latest-collapse-cockpit-results.md`. Do not use the live Reports screen until 1800 is applied.
+## Step 13: collapsible rooms, build on open, keep latest sent/printed report, Cockpit mapping (built and tested; migration 1800 APPLIED 2026-11-08)
+`docs/testing/step13-keep-latest-collapse-cockpit-results.md`. Applied and verified live: `printed_at`/`printed_by` on `reports`, `projects.contact_source`, storage delete policy `reports_obj_delete`, `mark_report_printed` and `prune_reports` (authenticated only, not anon), `authenticated` still SELECT-only on `reports`. The 4 trial reports (unsaved previews) are removed by the first build.
 
 ## Technical debt / notes
 - Decimal-inch and mm inputs round to nearest 1/64"; fraction denominators limited to 2..64 (powers of two).

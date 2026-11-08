@@ -1,6 +1,6 @@
 # Step 13: collapsible rooms, build on open, keep only the latest sent/printed report, Cockpit contact mapping
 
-Date: 2026-11-08. All data is fake. **Migration 1800 is written and tested locally but NOT applied (awaiting owner approval).**
+Date: 2026-11-08. All data is fake. **Migration 1800 was applied to project `zuyzxkkmsyuybbznelql` on 2026-11-08 after owner approval.** Live check: both new `reports` columns, `projects.contact_source`, storage policy `reports_obj_delete`, the two functions executable by `authenticated` and not `anon`, `authenticated` still SELECT-only on `reports`; security advisor shows only the expected SECURITY DEFINER notice for the two new functions. The 4 existing unsaved trial reports and their 4 files are still there and are removed by the first build.
 
 ## Owner requests and what was done
 1. **Rooms collapsible.** Each room on the job screen folds from its name (48 px target), keeps its name, progress and open-issue count when folded, is remembered per job on the phone, plus Collapse all / Expand all. Room status on the Reports screen folds too. Done and pushed earlier today.
@@ -21,7 +21,7 @@ Date: 2026-11-08. All data is fake. **Migration 1800 is written and tested local
 | Installer view / offline / phone | 28 / 80 / 297 passed |
 
 ## Not done / needs a decision
-- Migration 1800 not applied. Until it is, the live Reports screen would call functions that do not exist yet: do not use the Reports screen on the preview before 1800 is applied.
+- The new functions have not yet run for real (needs a manager session): the trial script checks them.
 - No project-creation screen exists yet (projects are created in the database), so "edit on project creation" has nothing to attach to; the edit is on the Reports screen.
 - Cockpit data is not fetched live. To fill a job: export its Cockpit record as JSON, run the script, approve the printed SQL.
 - "Printed" means the manager pressed Print (the app cannot see the printer).
