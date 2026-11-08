@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "npm run build -w @phc/field",
+  "framework": null,
   "installCommand": "npm install",
   "outputDirectory": "apps/field/dist",
   "rewrites": [{ "source": "/((?!assets/|sw\\.js|workbox-.*\\.js|manifest\\.webmanifest|icon.*).*)", "destination": "/index.html" }],
