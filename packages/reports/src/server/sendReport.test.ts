@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { FakeDb, FakeStorage } from "./fakes";
 import { fakeTransport } from "./transport";
-import { sendReport, sendTestReport } from "./sendReport";
+import { checkColleagueAddresses, sendReport, sendTestReport, shareReport } from "./sendReport";
 
 async function setup(type: "builder_site_audit" | "room_status" = "builder_site_audit") {
   const db = new FakeDb(); const storage = new FakeStorage();
@@ -125,5 +125,65 @@ describe("sendTestReport", () => {
     await expect(sendTestReport(deps, "r1", "bad")).rejects.toMatchObject({ code: "invalid_recipient" });
     await expect(sendTestReport(deps, "zzz", "m@example.test")).rejects.toMatchObject({ code: "report_not_found" });
     expect(transport.sent).toHaveLength(0);
+  });
+});
+
+describe("checkColleagueAddresses", () => {
+  it("accepts addresses on the domain (any case), de-duplicates, trims", () => {
+    expect(checkColleagueAddresses([" A@Phc.Example ", "b@phc.example", "A@Phc.Example"], "@PHC.example")).toEqual({ ok: true, emails: ["A@Phc.Example", "b@phc.example"] });
+  });
+  it("refuses other domains (including look-alikes and sub-domains), bad addresses, none and too many", () => {
+    for (const bad of ["x@gmail.example", "x@phc.example.evil.test", "x@notphc.example", "x@sub.phc.example", "no-at-sign", "a b@phc.example", "x@phc.example\nBcc: y@z.test"]) {
+      expect(checkColleagueAddresses([bad], "phc.example").ok, bad).toBe(false);
+    }
+    expect(checkColleagueAddresses([], "phc.example")).toMatchObject({ ok: false, code: "invalid_recipient" });
+    expect(checkColleagueAddresses(Array.from({ length: 11 }, (_, i) => `u${i}@phc.example`), "phc.example")).toMatchObject({ ok: false, code: "too_many_recipients" });
+  });
+});
+
+describe("shareReport", () => {
+  const share = async () => { const s = await setup(); return { ...s, sdeps: { ...s.deps, phcDomain: "phc.example" } }; };
+  it("sends one copy to each colleague, records them, and leaves the builder send untouched", async () => {
+    const { db, transport, sdeps } = await share();
+    const r = await shareReport(sdeps, "r1", ["a@phc.example", "b@phc.example"], "manager@phc.example");
+    expect(r.sentTo).toEqual(["a@phc.example", "b@phc.example"]);
+    expect(transport.sent.map((m) => m.to)).toEqual(["a@phc.example", "b@phc.example"]);
+    expect(transport.sent[0]!.text).toContain("manager@phc.example shared");
+    expect(transport.sent[0]!.text).toContain("not for the builder");
+    expect(db.reports.get("r1")).toMatchObject({ status: "built", shared_to: ["a@phc.example", "b@phc.example"] });
+    expect(await sendReport(sdeps, "r1", to)).toBe("sent");                       // the builder can still be sent the same report, once
+  });
+  it("can be repeated any number of times", async () => {
+    const { transport, sdeps } = await share();
+    await shareReport(sdeps, "r1", ["a@phc.example"], null); await shareReport(sdeps, "r1", ["a@phc.example"], null);
+    expect(transport.sent).toHaveLength(2);
+  });
+  it("a non-PHC address stops everything before anything is sent", async () => {
+    const { transport, db, sdeps } = await share();
+    await expect(shareReport(sdeps, "r1", ["a@phc.example", "builder@example.test"], null)).rejects.toMatchObject({ code: "recipient_not_phc" });
+    expect(transport.sent).toHaveLength(0);
+    expect(db.reports.get("r1")!.shared_at).toBeNull();
+  });
+  it("when some fail, the ones that were reached are recorded and the error names the rest", async () => {
+    const { db, sdeps } = await share();
+    let n = 0;
+    const flaky = { sent: [] as never[], async send(m: { to: string }) { if (m.to.startsWith("bad")) throw new Error("rejected"); n++; return { messageId: `x${n}` }; } };
+    await expect(shareReport({ ...sdeps, transport: flaky as never }, "r1", ["a@phc.example", "bad@phc.example"], null)).rejects.toMatchObject({ code: "share_failed", message: expect.stringContaining("bad@phc.example") });
+    expect(db.reports.get("r1")!.shared_to).toEqual(["a@phc.example"]);
+  });
+  it("refuses a report whose builder send is in flight, and a missing PDF", async () => {
+    const { db, storage, sdeps } = await share();
+    await db.queueReportSend("r1", null, "builder@example.test");
+    await expect(shareReport(sdeps, "r1", ["a@phc.example"], null)).rejects.toMatchObject({ code: "report_already_queued" });
+    db.reports.get("r1")!.status = "built"; storage.files.clear();
+    await expect(shareReport(sdeps, "r1", ["a@phc.example"], null)).rejects.toMatchObject({ code: "pdf_missing" });
+  });
+  it("sharing makes this the saved report and removes the older saved one of its type", async () => {
+    const { db, storage, sdeps } = await share();
+    await db.createReport({ id: "older", projectId: "p1", type: "builder_site_audit", path: "p1/older.pdf", bytes: 10 });
+    storage.files.set("reports/p1/older.pdf", Buffer.from("x")); db.reports.get("older")!.printed_at = "2026-09-01T10:00:00Z";
+    await shareReport(sdeps, "r1", ["a@phc.example"], null);
+    expect([...db.reports.keys()]).toEqual(["r1"]);
+    expect(storage.files.has("reports/p1/older.pdf")).toBe(false);
   });
 });

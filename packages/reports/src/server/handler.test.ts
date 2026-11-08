@@ -33,14 +33,29 @@ describe("reports api", () => {
     const { c, db, storage } = await ctx();
     expect((await handleReportsRequest(post({ action: "delete" }), c)).status).toBe(400);
     expect((await handleReportsRequest(post({ action: "build", projectId: "x'; drop", type: "room_status" }), c)).status).toBe(400);
-    expect((await handleReportsRequest(post({ action: "build", projectId: P, type: "other" }), c)).status).toBe(400);
+    expect((await handleReportsRequest(post({ action: "build", projectId: P, options: { preset: "weekly" } }), c)).status).toBe(400);
     expect((await handleReportsRequest(post({ action: "send", reportId: "nope" }), c)).status).toBe(400);
     expect((await handleReportsRequest(post(null), c)).status).toBe(400);
     expect(db.reports.size + storage.uploads.length).toBe(0);
   });
+  it("rejects options that make no sense, with the reason", async () => {
+    const { c, db } = await ctx();
+    const none = await handleReportsRequest(post({ action: "build", projectId: P, options: { preset: "custom", kinds: [], checklist: "none" } }), c);
+    expect(none).toMatchObject({ status: 422, json: { error: "nothing_selected" } });
+    const both = await handleReportsRequest(post({ action: "build", projectId: P, options: { preset: "custom", photos: "both" } }), c);
+    expect(both).toMatchObject({ status: 400, json: { error: "bad_options" } });
+    expect((await handleReportsRequest(post({ action: "build", projectId: P }), c)).status).toBe(400);
+    expect(db.reports.size).toBe(0);
+  });
+  it("builds a service report from options", async () => {
+    const { c, db } = await ctx();
+    const r = await handleReportsRequest(post({ action: "build", projectId: P, options: { preset: "service", issueStatus: "open", photos: "none", emptyRooms: true } }), c);
+    expect(r.status).toBe(200);
+    expect([...db.reports.values()][0]).toMatchObject({ report_type: "service" });
+  });
   it("builds a report", async () => {
     const { c, db } = await ctx();
-    const r = await handleReportsRequest(post({ action: "build", projectId: P, type: "room_status" }), c);
+    const r = await handleReportsRequest(post({ action: "build", projectId: P, options: { preset: "room_status" } }), c);
     expect(r.status).toBe(200);
     expect(db.reports.size).toBe(1);
     expect(r.json).toMatchObject({ bytes: expect.any(Number), reportId: expect.any(String) });
@@ -48,7 +63,7 @@ describe("reports api", () => {
   it("reports a too-large PDF as 413 with its size", async () => {
     const { c, db, storage } = await ctx();
     const boom = Object.assign(Object.create(db), { listRooms: async () => { throw new ReportTooLargeError(20_000_000, 18 * 1024 * 1024); } });
-    const r = await handleReportsRequest(post({ action: "build", projectId: P, type: "room_status" }), { ...c, makeDeps: () => ({ db: boom, storage }) });
+    const r = await handleReportsRequest(post({ action: "build", projectId: P, options: { preset: "room_status" } }), { ...c, makeDeps: () => ({ db: boom, storage }) });
     expect(r).toMatchObject({ status: 413, json: { error: "report_too_large", bytes: 20_000_000, limit: 18 * 1024 * 1024 } });
   });
   it("sends to the builder contact saved on the job, never to an address from the browser", async () => {
@@ -78,6 +93,28 @@ describe("reports api", () => {
     const { c } = await ctx();
     expect((await handleReportsRequest(post({ action: "print", reportId: "nope" }), c)).status).toBe(400);
     expect((await handleReportsRequest(post({ action: "print", reportId: R }), c)).status).toBe(404);
+  });
+  it("shares with colleagues on the PHC domain only, one copy each, and keeps the report as the saved one", async () => {
+    const { c, db, transport } = await ctx({ env: { REPORT_FROM: "Reports <sender@example.test>", PHC_EMAIL_DOMAIN: "phc.example" } });
+    await db.createReport({ id: R, projectId: P, type: "builder_site_audit", path: `${P}/${R}.pdf`, bytes: 10 });
+    (c.makeDeps("good").storage as unknown as FakeStorage).files.set(`reports/${P}/${R}.pdf`, Buffer.from("%PDF"));
+    const bad = await handleReportsRequest(post({ action: "share", reportId: R, recipients: ["builder@example.test"] }), c);
+    expect(bad).toMatchObject({ status: 422, json: { error: "recipient_not_phc" } });
+    expect(transport.sent).toHaveLength(0);
+    const ok = await handleReportsRequest(post({ action: "share", reportId: R, recipients: ["a@phc.example", "B@PHC.example", "a@phc.example"] }), c);
+    expect(ok).toMatchObject({ status: 200, json: { status: "shared", to: ["a@phc.example", "B@PHC.example"] } });
+    expect(transport.sent.map((m) => m.to)).toEqual(["a@phc.example", "B@PHC.example"]);
+    expect(db.reports.get(R)!.shared_at).toBeTruthy();
+    expect(db.reports.get(R)!.status).toBe("built");                                   // sharing does not use up the builder's once-only send
+    const again = await handleReportsRequest(post({ action: "share", reportId: R, recipients: ["a@phc.example"] }), c);
+    expect(again.status).toBe(200);
+  });
+  it("says plainly when PHC_EMAIL_DOMAIN is not set", async () => {
+    const { c, db } = await ctx();
+    await db.createReport({ id: R, projectId: P, type: "builder_site_audit", path: `${P}/${R}.pdf`, bytes: 10 });
+    const r = await handleReportsRequest(post({ action: "share", reportId: R, recipients: ["a@phc.example"] }), c);
+    expect(r).toMatchObject({ status: 500, json: { error: "not_configured" } });
+    expect(String(r.json.message)).toContain("PHC_EMAIL_DOMAIN");
   });
   it("will not send without a valid builder email on the job", async () => {
     const { c, db, transport } = await ctx();
@@ -115,7 +152,7 @@ describe("reports api", () => {
   });
   it("an unexpected error is a generic 500 that does not leak details", async () => {
     const { c } = await ctx({ makeDeps: () => { throw new Error("secret-ish internal detail"); } });
-    const r = await handleReportsRequest(post({ action: "build", projectId: P, type: "room_status" }), c);
+    const r = await handleReportsRequest(post({ action: "build", projectId: P, options: { preset: "room_status" } }), c);
     expect(r.status).toBe(500);
     expect(JSON.stringify(r.json)).not.toContain("secret-ish");
   });

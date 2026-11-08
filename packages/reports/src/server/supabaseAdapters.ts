@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ReportError } from "./errors";
 import type { IssuePhotoRow, IssueRow, ProfileRow, ReportDb, ReportProject, ReportRow, ReportStorage, RoomCheckRow, RoomRow } from "./ports";
 
-const CODES = ["report_already_queued", "report_already_sent", "report_not_queued", "invalid_recipient", "forbidden"];
+const CODES = ["too_many_recipients", "report_already_queued", "report_already_sent", "report_not_queued", "invalid_recipient", "forbidden"];
 
 function fail(error: { message: string; code?: string }): never {
   const code = CODES.find((c) => error.message.includes(c));
@@ -34,7 +34,7 @@ export function supabaseDb(sb: SupabaseClient): ReportDb {
     async listProfiles(ids) { return ids.length === 0 ? [] : rows<ProfileRow>(sb.from("profiles").select("id,full_name,email").in("id", ids)); },
     listRoomChecks: (projectId) => rows<RoomCheckRow>(sb.from("room_checks").select("room_id,item_key,state,note,checked_by,checked_at").eq("project_id", projectId)),
     async createReport(a) {
-      const { data, error } = await sb.rpc("create_report", { p_id: a.id, p_project: a.projectId, p_type: a.type, p_path: a.path, p_bytes: a.bytes });
+      const { data, error } = await sb.rpc("create_report", { p_id: a.id, p_project: a.projectId, p_type: a.type, p_path: a.path, p_bytes: a.bytes, p_options: a.options });
       if (error) fail(error);
       return data as ReportRow;
     },
@@ -50,6 +50,7 @@ export function supabaseDb(sb: SupabaseClient): ReportDb {
     },
     async markReportSent(id, messageId) { const { error } = await sb.rpc("mark_report_sent", { p_report_id: id, p_message_id: messageId }); if (error) fail(error); },
     async markReportPrinted(id) { const { error } = await sb.rpc("mark_report_printed", { p_report_id: id }); if (error) fail(error); },
+    async markReportShared(id, emails) { const { error } = await sb.rpc("mark_report_shared", { p_report_id: id, p_emails: emails }); if (error) fail(error); },
     async pruneReports(projectId, type, keepId) {
       const { data, error } = await sb.rpc("prune_reports", { p_project: projectId, p_type: type, p_keep: keepId });
       if (error) fail(error);

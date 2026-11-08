@@ -9,7 +9,8 @@ export const s = StyleSheet.create({
   logoBox: { alignItems: "center" },
   logo: { width: 64, height: 64 },
   company: { fontSize: 9, color: COLORS.muted, marginTop: 4 },
-  jobName: { fontSize: 30, fontWeight: 600, marginTop: 90 },
+  coverKind: { fontSize: 11, color: COLORS.gold, fontWeight: 600, marginTop: 80, letterSpacing: 1 },
+  jobName: { fontSize: 30, fontWeight: 600, marginTop: 8 },
   rule: { height: 3, backgroundColor: COLORS.gold, marginTop: 14, marginBottom: 14 },
   coverLine: { fontSize: 13, marginTop: 4 },
   muted: { color: COLORS.muted },
@@ -21,10 +22,10 @@ export function Footer() {
   return <Text style={s.footer} fixed render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />;
 }
 
-export interface CoverProps { jobName: string; preparedFor: string | null; siteAddress: string | null; builtAt: string; timezone: string; logo: Buffer; children?: ReactNode }
+export interface CoverProps { title?: string; jobName: string; preparedFor: string | null; siteAddress: string | null; builtAt: string; timezone: string; logo: Buffer; children?: ReactNode }
 
 /** Cover page body (inside a Page): logo top right, job name, gold rule, date, prepared for, address, then the caller's counts. */
-export function Cover({ jobName, preparedFor, siteAddress, builtAt, timezone, logo, children }: CoverProps) {
+export function Cover({ title, jobName, preparedFor, siteAddress, builtAt, timezone, logo, children }: CoverProps) {
   return (
     <View>
       <View style={s.coverTop}>
@@ -33,6 +34,7 @@ export function Cover({ jobName, preparedFor, siteAddress, builtAt, timezone, lo
           <Text style={s.company}>Public House Creative</Text>
         </View>
       </View>
+      {title ? <Text style={s.coverKind}>{title}</Text> : null}
       <Text style={s.jobName}>{safeText(jobName)}</Text>
       <View style={s.rule} />
       <Text style={s.coverLine}>{formatCoverDate(builtAt, timezone)}</Text>

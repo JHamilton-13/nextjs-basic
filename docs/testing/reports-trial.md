@@ -32,6 +32,15 @@ private window signed in as an installer of the same project for part F.
 11. [ ] **Create status PDF**, preview it, press **Print** (it opens the PDF and marks it Printed). Build and print another: only ONE status report stays, labelled Printed. Preview it: Kitchen Completed, Bath 1 Not completed with the note.
 12. [ ] Press **Send test to me**. Expected: the plain message that sending is not set up yet (it names the email settings). Nothing is emailed and the report stays Ready to send.
 
+## B2. Report builder, markup and archive (needs migration 1900 applied; no email settings needed)
+20. [ ] Markup: open a photo's **Mark up**. The tool row reads **Pen, Marker, Text, ⌫ Eraser, Undo**. Tap Eraser: a hint appears over the photo. Drag across a mark: it disappears; Undo brings it back. (On the Sync queue screen, "App version" shows which build the phone is running. If it is not the newest, close the app completely and reopen it.)
+21. [ ] Save the markup. The issue now shows only the marked-up photo, with **Show 1 archived original**. Tap it: the original appears, labelled "Original (archived)", with no Mark up button.
+22. [ ] Reports > Build a report. Tap **Service report**: Punch, Missing and Damaged are ticked, Open and completed, no room status. Tick Touch-Ups: the type switches to Custom. Tap **Original photos only**: marked-up becomes unticked (one or the other). Untick everything with room status "Do not show": a message says what to choose and Build is disabled.
+23. [ ] Build a Service report. Open the PDF: every room's Punch / Missing / Damaged items are listed (completed rooms too), each with its kind, "Completed m/d" on completed ones, photos as chosen. Rooms with nothing are left out; tick "Also list rooms with nothing to show" and rebuild: they appear with "Nothing to list".
+24. [ ] Build **Room status** with "Rooms not completed only": completed rooms are not on the PDF; with "All rooms" they appear as Completed. There are no counts at the end of rows.
+25. [ ] Build the same report with Marked-up photos, then with Original photos only: the PDF shows one kind or the other, never both.
+26. [ ] **Email colleagues**: type a non-PHC address: refused with the reason. Type two PHC addresses: each gets a copy marked internal, the report shows **Shared**, and the builder send is still available. Do it again: it works again.
+
 ## C. After the owner adds the Vercel settings (see `docs/ops/gmail-send-setup.md`) and redeploys
 13. [ ] **Send test to me**: a mail arrives in YOUR mailbox, subject starts `TEST`, the PDF is attached and opens. The report is still Ready to send.
 14. [ ] **Send to builder**: the confirm box shows `TEST Builder (your email)` and "only be sent once". Press Cancel: nothing sent.
@@ -53,6 +62,13 @@ private window signed in as an installer of the same project for part F.
 ## Results sheet
 | # | Result (ok / what happened) |
 | --- | --- |
+| 20 |  |
+| 21 |  |
+| 22 |  |
+| 23 |  |
+| 24 |  |
+| 25 |  |
+| 26 |  |
 | 6 |  |
 | 7 |  |
 | 8 |  |

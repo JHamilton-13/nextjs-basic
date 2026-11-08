@@ -1,8 +1,8 @@
-import { isValidEmail } from "@phc/domain";
+import { isValidEmail, normalizeReportOptions } from "@phc/domain";
 import { buildReport, type BuildDeps } from "./buildReport";
 import { ReportError, ReportTooLargeError } from "./errors";
 import type { ReportDb, ReportStorage } from "./ports";
-import { printReport, sendReport, sendTestReport } from "./sendReport";
+import { printReport, sendReport, sendTestReport, shareReport } from "./sendReport";
 import type { EmailTransport } from "./transport";
 
 export interface ApiRequest { method: string; authorization: string | undefined; body: unknown }
@@ -14,18 +14,18 @@ export interface HandlerContext {
   /** Database and storage acting as that user (their own session; row-level security applies). */
   makeDeps(token: string): { db: ReportDb; storage: ReportStorage };
   transport(): EmailTransport;
-  env: { REPORT_FROM?: string; REPORT_TIMEZONE?: string };
+  env: { REPORT_FROM?: string; REPORT_TIMEZONE?: string; PHC_EMAIL_DOMAIN?: string };
   logo?: Buffer;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const STATUS: Record<string, number> = {
   forbidden: 403, project_not_found: 404, report_not_found: 404, report_already_queued: 409, report_already_sent: 409, report_not_queued: 409,
-  invalid_recipient: 422, no_recipient: 422, report_too_large: 413, not_configured: 500, pdf_missing: 409,
+  invalid_recipient: 422, no_recipient: 422, recipient_not_phc: 422, too_many_recipients: 422, bad_options: 400, nothing_selected: 422, report_too_large: 413, not_configured: 500, pdf_missing: 409,
 };
 const bad = (status: number, code: string, message: string): ApiResponse => ({ status, json: { error: code, message } });
 
-/** One endpoint, four actions: build, print, send, sendTest. The route file only wires real Supabase and Gmail into this. */
+/** One endpoint, five actions: build, print, send, sendTest, share. The route file only wires real Supabase and Gmail into this. */
 export async function handleReportsRequest(req: ApiRequest, ctx: HandlerContext): Promise<ApiResponse> {
   if (req.method !== "POST") return bad(405, "method_not_allowed", "Use POST.");
   const m = /^Bearer (.+)$/.exec(req.authorization ?? "");
@@ -33,7 +33,7 @@ export async function handleReportsRequest(req: ApiRequest, ctx: HandlerContext)
   const token = m[1]!;
   const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
   const action = body.action;
-  if (action !== "build" && action !== "send" && action !== "sendTest" && action !== "print") return bad(400, "bad_request", "Unknown action.");
+  if (action !== "build" && action !== "send" && action !== "sendTest" && action !== "print" && action !== "share") return bad(400, "bad_request", "Unknown action.");
 
   try {
     const user = await ctx.getUser(token);
@@ -42,10 +42,12 @@ export async function handleReportsRequest(req: ApiRequest, ctx: HandlerContext)
     const timezone = ctx.env.REPORT_TIMEZONE || "America/Phoenix";
 
     if (action === "build") {
-      const projectId = String(body.projectId ?? ""); const type = body.type;
-      if (!UUID.test(projectId) || (type !== "builder_site_audit" && type !== "room_status")) return bad(400, "bad_request", "A job and a report type are required.");
+      const projectId = String(body.projectId ?? "");
+      if (!UUID.test(projectId)) return bad(400, "bad_request", "A job is required.");
+      const options = normalizeReportOptions(body.options);
+      if (!options.ok) return bad(options.error.code === "nothing_selected" ? 422 : 400, options.error.code, options.error.message);
       const deps: BuildDeps = { db, storage, timezone, ...(ctx.logo ? { logo: ctx.logo } : {}) };
-      return { status: 200, json: { ...(await buildReport(deps, projectId, type)) } };
+      return { status: 200, json: { ...(await buildReport(deps, projectId, options.value)) } };
     }
 
     const reportId = String(body.reportId ?? "");
@@ -53,6 +55,13 @@ export async function handleReportsRequest(req: ApiRequest, ctx: HandlerContext)
     if (action === "print") {                                   // printing needs no email settings
       await printReport({ db, storage }, reportId);
       return { status: 200, json: { status: "printed" } };
+    }
+    if (action === "share") {
+      if (!ctx.env.PHC_EMAIL_DOMAIN) return bad(500, "not_configured", "Sharing with colleagues is not set up yet: the PHC_EMAIL_DOMAIN setting is missing in Vercel.");
+      if (!ctx.env.REPORT_FROM) return bad(500, "not_configured", "Sending is not set up yet: the REPORT_FROM setting is missing in Vercel.");
+      const recipients = Array.isArray(body.recipients) ? body.recipients.filter((x): x is string => typeof x === "string") : [];
+      const r = await shareReport({ db, storage, transport: ctx.transport(), from: ctx.env.REPORT_FROM, timezone, phcDomain: ctx.env.PHC_EMAIL_DOMAIN }, reportId, recipients, user.email);
+      return { status: 200, json: { status: "shared", to: r.sentTo } };
     }
     const from = ctx.env.REPORT_FROM;
     if (!from) return bad(500, "not_configured", "Sending is not set up yet: the REPORT_FROM setting is missing in Vercel.");
@@ -75,7 +84,7 @@ export async function handleReportsRequest(req: ApiRequest, ctx: HandlerContext)
     return { status: 200, json: { status: "sent", to: project.prepared_for_email } };
   } catch (e) {
     if (e instanceof ReportTooLargeError) return { status: 413, json: { error: e.code, message: e.message, bytes: e.bytes, limit: e.limit } };
-    if (e instanceof ReportError) return bad(STATUS[e.code] ?? (e.code === "send_failed" || e.code === "sent_not_recorded" ? 502 : 500), e.code, e.message);
+    if (e instanceof ReportError) return bad(STATUS[e.code] ?? (e.code === "send_failed" || e.code === "share_failed" || e.code === "sent_not_recorded" ? 502 : 500), e.code, e.message);
     console.error("reports api error", e instanceof Error ? e.message : e);       // never log the token or the request body
     return bad(500, "server_error", "Something went wrong on the server. Nothing was sent.");
   }

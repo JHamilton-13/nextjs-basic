@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { PRESET_OPTIONS } from "@phc/domain";
 import { callReportsApi, canManageReports, describeReportProblem, reportStatusLabel, savedLabel, stuckQueued } from "../src/lib/reportsApi";
 
 const P = "p1";
@@ -19,12 +20,12 @@ describe("callReportsApi", () => {
   it("posts JSON with the signed-in token and returns the data", async () => {
     let seen: { url: string; init: RequestInit } | undefined;
     const f = (async (url: string, init: RequestInit) => { seen = { url, init }; return new Response(JSON.stringify({ reportId: "r1", bytes: 10 }), { status: 200 }); }) as unknown as typeof fetch;
-    const r = await callReportsApi(f, "TOKEN", { action: "build", projectId: P, type: "room_status" });
+    const r = await callReportsApi(f, "TOKEN", { action: "build", projectId: P, options: PRESET_OPTIONS.room_status });
     expect(r).toEqual({ ok: true, data: { reportId: "r1", bytes: 10 } });
     expect(seen!.url).toBe("/api/reports");
     expect(seen!.init.method).toBe("POST");
     expect((seen!.init.headers as Record<string, string>).Authorization).toBe("Bearer TOKEN");
-    expect(JSON.parse(String(seen!.init.body))).toEqual({ action: "build", projectId: P, type: "room_status" });
+    expect(JSON.parse(String(seen!.init.body))).toEqual({ action: "build", projectId: P, options: PRESET_OPTIONS.room_status });
   });
   it("returns the server's error code and message", async () => {
     expect(await callReportsApi(res(409, { error: "report_already_sent", message: "x" }), "t", { action: "send", reportId: "r" })).toMatchObject({ ok: false, status: 409, code: "report_already_sent" });
@@ -39,7 +40,7 @@ describe("callReportsApi", () => {
 
 describe("describeReportProblem (plain words for managers)", () => {
   it("covers every code the server can return", () => {
-    for (const c of ["not_signed_in", "forbidden", "project_not_found", "report_not_found", "report_already_queued", "report_already_sent", "invalid_recipient", "no_recipient", "report_too_large", "not_configured", "pdf_missing", "send_failed", "sent_not_recorded", "network", "server_error", "db_error", "upload_failed"]) {
+    for (const c of ["not_signed_in", "forbidden", "project_not_found", "report_not_found", "report_already_queued", "report_already_sent", "invalid_recipient", "no_recipient", "report_too_large", "not_configured", "pdf_missing", "send_failed", "sent_not_recorded", "network", "server_error", "db_error", "upload_failed", "recipient_not_phc", "too_many_recipients", "bad_options", "nothing_selected", "share_failed"]) {
       expect(describeReportProblem({ code: c, message: "m" }).length, c).toBeGreaterThan(10);
     }
   });
@@ -74,5 +75,6 @@ describe("savedLabel", () => {
     expect(savedLabel({ status: "sent", sent_at: "2026-09-01T10:00:00Z", printed_at: null })).toBe("sent");
     expect(savedLabel({ status: "built", sent_at: null, printed_at: "2026-09-01T10:00:00Z" })).toBe("printed");
     expect(savedLabel({ status: "sent", sent_at: "2026-09-01T10:00:00Z", printed_at: "2026-09-01T11:00:00Z" })).toBe("sent and printed");
+    expect(savedLabel({ status: "built", sent_at: null, printed_at: null, shared_at: "2026-09-01T10:00:00Z" })).toBe("shared");
   });
 });

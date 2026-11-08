@@ -142,7 +142,7 @@ const server = async () => (await fetch(`${MOCK}/__sent`)).json();
       check((await page.getByTestId("report-row").first().getByTestId("report-send").count()) === 0 && (await page.getByTestId("report-kind").first().innerText()).includes("Sent"), tag("a sent report is labelled Sent and has no Send button (it can only be sent once)"));
 
       // a new build next to the saved report; a failed send shows the reason and Retry; the retry sends once and REPLACES the old saved report
-      await page.getByTestId("build-audit").tap();
+      await page.getByTestId("preset-builder_site_audit").tap(); await page.getByTestId("build-report").tap();
       await waitFor(async () => (await page.getByTestId("report-row").count()) === 2, "preview next to the sent report", 30000);
       check((await server()).files.length === 2 && (await page.getByTestId("report-row").filter({ hasText: "Preview, not saved" }).count()) === 1, tag("a rebuild adds one preview next to the saved report"));
       const sentId = (await server()).reports.find((r) => r.status === "sent").id;
@@ -162,10 +162,10 @@ const server = async () => (await fetch(`${MOCK}/__sent`)).json();
       check(s5.sent.filter((m) => m.to === "builder@example.test").length === 2 && s5.reports.length === 1 && s5.reports[0].id !== sentId && s5.files.length === 1, tag("the retry sent once; the previously sent report and its file were deleted (only the latest sent report is kept)"));
 
       // the status report: Print records it, and a newer print replaces the older one
-      await page.getByTestId("build-status").tap();
+      await page.getByTestId("preset-room_status").tap(); await page.getByTestId("build-report").tap();
       await waitFor(async () => (await page.getByTestId("report-row").count()) === 2, "status preview", 30000);
       const statusRow = () => page.getByTestId("report-row").filter({ hasText: "Room status" });
-      check((await statusRow().first().getByTestId("report-send").count()) === 0, tag("a status PDF can be previewed, printed and tested but has no Send to builder button"));
+      check((await statusRow().first().getByTestId("report-print").count()) === 1 && (await statusRow().first().getByTestId("report-test").count()) === 1 && (await statusRow().first().getByTestId("report-share").count()) === 1, tag("a status PDF can be previewed, printed, tested and emailed to colleagues"));
       const [printWin] = await Promise.all([context.waitForEvent("page"), statusRow().first().getByTestId("report-print").tap()]);
       await printWin.waitForURL(/\/storage\/v1\/object\/sign\/reports\//, { timeout: 10000 }).catch(() => {});
       check(printWin.url().includes("/storage/v1/object/sign/reports/"), tag("Print opens the PDF"));
@@ -173,7 +173,7 @@ const server = async () => (await fetch(`${MOCK}/__sent`)).json();
       await waitFor(async () => (await statusRow().first().getByTestId("report-kind").innerText()).includes("Printed"), "printed label");
       const s6 = await server();
       check(s6.reports.find((r) => r.report_type === "room_status").printed_at && s6.reports.length === 2, tag("printing is recorded and the printed status report is kept"));
-      await page.getByTestId("build-status").tap();
+      await page.getByTestId("preset-room_status").tap(); await page.getByTestId("build-report").tap();
       await waitFor(async () => (await page.getByTestId("report-row").count()) === 3, "second status preview", 30000);
       const newPreview = statusRow().filter({ hasText: "Preview, not saved" });
       const [printWin2] = await Promise.all([context.waitForEvent("page"), newPreview.getByTestId("report-print").tap()]);
@@ -182,9 +182,48 @@ const server = async () => (await fetch(`${MOCK}/__sent`)).json();
       const s7 = await server();
       check(s7.reports.filter((r) => r.report_type === "room_status").length === 1 && s7.reports.filter((r) => r.report_type === "builder_site_audit").length === 1 && s7.files.length === 2, tag("a new print replaces the older print; the sent site audit is untouched; no stray files"));
 
+      // ---- the report builder: choose what goes on the report ----
+      await page.getByTestId("preset-service").tap();
+      const checked = async (id) => page.getByTestId(id).isChecked();
+      check((await checked("kind-punch_item")) && (await checked("kind-missing_part")) && (await checked("kind-damaged_part")) && !(await checked("kind-pre_install_correction")) && !(await checked("kind-touch_up")) && (await checked("status-both")) && (await checked("checklist-none")) && (await checked("photos-annotated")), tag("builder: the Service preset ticks Punch, Missing and Damaged, open and completed, no room status, marked-up photos"));
+      await page.getByTestId("kind-touch_up").tap();
+      check((await page.getByTestId("preset-custom").getAttribute("aria-pressed")) === "true" && (await checked("kind-touch_up")), tag("builder: changing a choice turns the preset into Custom"));
+      await page.getByTestId("photos-original").tap();
+      check((await checked("photos-original")) && !(await checked("photos-annotated")) && !(await checked("photos-none")), tag("builder: photos are one or the other (marked-up, original or none)"));
+      await page.getByTestId("checklist-incomplete").tap(); await page.getByTestId("opt-empty-rooms").tap();
+      for (const k of ["punch_item", "missing_part", "damaged_part", "touch_up"]) await page.getByTestId(`kind-${k}`).tap();
+      await page.getByTestId("checklist-none").tap();
+      check((await page.getByTestId("opts-problem").innerText()).includes("Choose at least one") && (await page.getByTestId("build-report").isDisabled()), tag("builder: with nothing chosen it says what to choose and Build is disabled"));
+      await page.getByTestId("kind-touch_up").tap();                                  // Touch-ups, open+completed, no room status, original photos
+      await page.getByTestId("build-report").tap();
+      await waitFor(async () => (await server()).reports.some((r) => r.report_type === "custom"), "custom report built", 30000);
+      const custom = (await server()).reports.find((r) => r.report_type === "custom");
+      check(JSON.stringify(custom.options.kinds) === '["touch_up"]' && custom.options.photos === "original" && custom.options.checklist === "none" && custom.options.emptyRooms === true, tag("builder: the server built exactly the options chosen and stored them"));
+      check((await page.getByTestId("report-options").filter({ hasText: "Touch-Ups" }).count()) === 1, tag("builder: the report row says what it shows"));
+
+      // ---- email colleagues (PHC addresses only), repeatable, separate from the builder send ----
+      const customRow = page.getByTestId("report-row").filter({ hasText: "Custom report" });
+      await customRow.getByTestId("report-share").tap();
+      await customRow.getByTestId("share-emails").fill("someone@gmail.example");
+      await customRow.getByTestId("share-send").tap();
+      await waitFor(async () => (await page.getByTestId("reports-message").innerText()).includes("not a PHC address"), "non-PHC refused");
+      check((await server()).sent.filter((m) => m.to === "someone@gmail.example").length === 0, tag("sharing: an address outside PHC is refused and nothing is sent"));
+      await customRow.getByTestId("share-emails").fill("pat@phc.example, sam@phc.example");
+      await customRow.getByTestId("share-send").tap();
+      await waitFor(async () => (await page.getByTestId("reports-message").innerText()).includes("Shared with"), "shared");
+      const sh = await server();
+      check(sh.sent.filter((m) => m.to.endsWith("@phc.example")).length === 2 && sh.sent.every((m) => m.isPdf || !m.to.endsWith("@phc.example")), tag("sharing: each colleague gets their own email with the PDF"));
+      await waitFor(async () => (await page.getByTestId("report-row").filter({ hasText: "Custom report" }).getByTestId("report-kind").innerText()).includes("Shared"), "shared label");
+      check((await page.getByTestId("report-row").filter({ hasText: "Custom report" }).getAttribute("data-status")) === "built" && (await page.getByTestId("report-row").filter({ hasText: "Custom report" }).getByTestId("report-send").count()) === 1, tag("sharing: the report is kept as Shared and the builder send is still available"));
+      await page.getByTestId("report-row").filter({ hasText: "Custom report" }).getByTestId("report-share").tap();
+      await page.getByTestId("report-row").filter({ hasText: "Custom report" }).getByTestId("share-emails").fill("pat@phc.example");
+      await page.getByTestId("report-row").filter({ hasText: "Custom report" }).getByTestId("share-send").tap();
+      await waitFor(async () => (await server()).sent.filter((m) => m.to === "pat@phc.example").length === 2, "shared again");
+      check(true, tag("sharing: it can be repeated"));
+
       // 44 px touch targets on the buttons that matter
-      const targets = ["build-audit", "build-status", "contact-save"];
-      for (const id of targets) { const b = await page.getByTestId(id).boundingBox(); check(b.height >= 44, tag(`${id} is at least 44 px tall (${Math.round(b.height)})`)); }
+      const targets = ["build-report", "preset-service", "contact-save", "report-share"];
+      for (const id of targets) { const b = await page.getByTestId(id).first().boundingBox(); check(b.height >= 44, tag(`${id} is at least 44 px tall (${Math.round(b.height)})`)); }
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
       check(!overflow, tag("no sideways scrolling on this screen"));
 

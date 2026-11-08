@@ -6,24 +6,13 @@ import { createClient } from "@supabase/supabase-js";
 // src/server/transport.ts
 import MailComposer from "nodemailer/lib/mail-composer/index.js";
 
+// ../domain/src/result.ts
+var ok = (value) => ({ ok: true, value });
+var err = (error) => ({ ok: false, error });
+
 // ../domain/src/roles.ts
 var OVERRIDE_ROLES = ["admin", "production_manager", "project_manager", "installation_manager"];
 var DEFAULT_RELEASE_ROLES = [...OVERRIDE_ROLES];
-
-// ../domain/src/reports/builderAudit.ts
-function builderAuditSummary(issues, rooms) {
-  const out = [];
-  let identified = 0;
-  let incomplete = 0;
-  for (const room of rooms) {
-    const mine = issues.filter((i) => i.roomId === room.id && i.kind === "pre_install_correction" && i.status !== "void");
-    if (mine.length === 0) continue;
-    identified += mine.length;
-    incomplete += mine.filter((i) => i.status === "open").length;
-    out.push({ roomId: room.id, roomName: room.name, issues: mine });
-  }
-  return { identified, incomplete, rooms: out };
-}
 
 // ../domain/src/reports/roomStatus.ts
 function roomStatus(defs, marks) {
@@ -66,6 +55,67 @@ var ROOM_CHECK_ITEMS = [
   { key: "clean", label: "Cabinetry clean" },
   { key: "finishing", label: "Caulk, fast caps, nail holes" }
 ];
+
+// ../domain/src/reports/reportModel.ts
+var KIND_ORDER = ["pre_install_correction", "punch_item", "missing_part", "damaged_part", "touch_up"];
+var SERVICE_KINDS = ["punch_item", "missing_part", "damaged_part"];
+var PRESET_OPTIONS = {
+  builder_site_audit: { preset: "builder_site_audit", kinds: ["pre_install_correction"], issueStatus: "both", checklist: "none", emptyRooms: false, photos: "annotated" },
+  service: { preset: "service", kinds: SERVICE_KINDS, issueStatus: "both", checklist: "none", emptyRooms: false, photos: "annotated" },
+  room_status: { preset: "room_status", kinds: SERVICE_KINDS, issueStatus: "open", checklist: "all", emptyRooms: false, photos: "none" },
+  custom: { preset: "custom", kinds: KIND_ORDER, issueStatus: "both", checklist: "incomplete", emptyRooms: false, photos: "annotated" }
+};
+function reportTitle(o) {
+  return { builder_site_audit: "Builder Site Audit", service: "Service Report", room_status: "Room Status", custom: "Project Report" }[o.preset];
+}
+var PRESETS = Object.keys(PRESET_OPTIONS);
+var oneOf = (v, allowed) => typeof v === "string" && allowed.includes(v);
+function normalizeReportOptions(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return err({ code: "bad_options", message: "Report options are missing." });
+  const o = input;
+  const preset = o.preset === void 0 ? "custom" : o.preset;
+  if (!oneOf(preset, PRESETS)) return err({ code: "bad_options", message: "Unknown report type." });
+  const base = PRESET_OPTIONS[preset];
+  let kinds = base.kinds;
+  if (o.kinds !== void 0) {
+    if (!Array.isArray(o.kinds) || !o.kinds.every((k) => oneOf(k, KIND_ORDER))) return err({ code: "bad_options", message: "Unknown issue type." });
+    kinds = KIND_ORDER.filter((k) => o.kinds.includes(k));
+  }
+  const issueStatus = o.issueStatus === void 0 ? base.issueStatus : o.issueStatus;
+  if (!oneOf(issueStatus, ["open", "completed", "both"])) return err({ code: "bad_options", message: "Issue status must be open, completed or both." });
+  const checklist = o.checklist === void 0 ? base.checklist : o.checklist;
+  if (!oneOf(checklist, ["none", "incomplete", "all"])) return err({ code: "bad_options", message: "Room status must be none, incomplete or all." });
+  const photos = o.photos === void 0 ? base.photos : o.photos;
+  if (!oneOf(photos, ["none", "annotated", "original"])) return err({ code: "bad_options", message: "Photos must be none, marked-up or original (one or the other)." });
+  const emptyRooms = o.emptyRooms === void 0 ? base.emptyRooms : o.emptyRooms;
+  if (typeof emptyRooms !== "boolean") return err({ code: "bad_options", message: "Empty rooms must be on or off." });
+  if (kinds.length === 0 && checklist === "none") return err({ code: "nothing_selected", message: "Choose at least one issue type or show the room status." });
+  return ok({ preset, kinds, issueStatus, checklist, emptyRooms, photos });
+}
+var NOT_STARTED = { completed: false, outstanding: ["Checklist not started"], started: false, byWho: null, at: null };
+function buildReportModel(input, options) {
+  const kinds = new Set(options.kinds);
+  const wanted = (i) => i.status !== "void" && kinds.has(i.kind) && (options.issueStatus === "both" || i.status === options.issueStatus);
+  const rooms = [];
+  let identified = 0;
+  let incomplete = 0;
+  let roomsCompleted = 0;
+  let roomsWithChecklist = 0;
+  for (const room of input.rooms) {
+    const mine = input.issues.filter((i) => i.roomId === room.id && wanted(i));
+    const info = input.checklist[room.id] ?? NOT_STARTED;
+    const showChecklist = options.checklist === "all" || options.checklist === "incomplete" && !info.completed;
+    if (mine.length === 0 && !showChecklist && !options.emptyRooms) continue;
+    identified += mine.length;
+    incomplete += mine.filter((i) => i.status === "open").length;
+    if (showChecklist) {
+      roomsWithChecklist++;
+      if (info.completed) roomsCompleted++;
+    }
+    rooms.push({ roomId: room.id, roomName: room.name, checklist: showChecklist ? { ...info, outstanding: [...info.outstanding] } : null, issues: mine.map((i) => ({ ...i, photos: [...i.photos] })) });
+  }
+  return { options, rooms, totals: { identified, incomplete, roomsCompleted, roomsWithChecklist } };
+}
 
 // src/server/transport.ts
 function safeFileName(jobName, date, kind = "Site Audit") {
@@ -133,7 +183,7 @@ function getTransport(env) {
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 
-// src/BuilderAuditDocument.tsx
+// src/ReportDocument.tsx
 import { Document, Image as Image2, Page as Page2, StyleSheet as StyleSheet2, Text as Text2, View as View2 } from "@react-pdf/renderer";
 
 // src/tokens.ts
@@ -179,7 +229,8 @@ var s = StyleSheet.create({
   logoBox: { alignItems: "center" },
   logo: { width: 64, height: 64 },
   company: { fontSize: 9, color: COLORS.muted, marginTop: 4 },
-  jobName: { fontSize: 30, fontWeight: 600, marginTop: 90 },
+  coverKind: { fontSize: 11, color: COLORS.gold, fontWeight: 600, marginTop: 80, letterSpacing: 1 },
+  jobName: { fontSize: 30, fontWeight: 600, marginTop: 8 },
   rule: { height: 3, backgroundColor: COLORS.gold, marginTop: 14, marginBottom: 14 },
   coverLine: { fontSize: 13, marginTop: 4 },
   muted: { color: COLORS.muted },
@@ -189,12 +240,13 @@ var s = StyleSheet.create({
 function Footer() {
   return /* @__PURE__ */ jsx(Text, { style: s.footer, fixed: true, render: ({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}` });
 }
-function Cover({ jobName, preparedFor, siteAddress, builtAt, timezone, logo, children }) {
+function Cover({ title, jobName, preparedFor, siteAddress, builtAt, timezone, logo, children }) {
   return /* @__PURE__ */ jsxs(View, { children: [
     /* @__PURE__ */ jsx(View, { style: s.coverTop, children: /* @__PURE__ */ jsxs(View, { style: s.logoBox, children: [
       /* @__PURE__ */ jsx(Image, { src: logo, style: s.logo }),
       /* @__PURE__ */ jsx(Text, { style: s.company, children: "Public House Creative" })
     ] }) }),
+    title ? /* @__PURE__ */ jsx(Text, { style: s.coverKind, children: title }) : null,
     /* @__PURE__ */ jsx(Text, { style: s.jobName, children: safeText(jobName) }),
     /* @__PURE__ */ jsx(View, { style: s.rule }),
     /* @__PURE__ */ jsx(Text, { style: s.coverLine, children: formatCoverDate(builtAt, timezone) }),
@@ -207,13 +259,21 @@ function Cover({ jobName, preparedFor, siteAddress, builtAt, timezone, logo, chi
   ] });
 }
 
-// src/BuilderAuditDocument.tsx
+// src/ReportDocument.tsx
 import { jsx as jsx2, jsxs as jsxs2 } from "react/jsx-runtime";
+var KIND_BADGE = { pre_install_correction: "PRE-INSTALL CORRECTION", punch_item: "PUNCH ITEM", missing_part: "MISSING PART", damaged_part: "DAMAGED PART", touch_up: "TOUCH-UP" };
+var KIND_PLURAL = { pre_install_correction: "Pre-Install Corrections", punch_item: "Punch Items", missing_part: "Missing Parts", damaged_part: "Damaged Parts", touch_up: "Touch-Ups" };
 var a = StyleSheet2.create({
-  roomHeading: { fontSize: 18, fontWeight: 600, marginBottom: 6 },
+  roomHeading: { fontSize: 18, fontWeight: 600, marginBottom: 4 },
   divider: { height: 2, backgroundColor: COLORS.gold, marginTop: 18, marginBottom: 14 },
-  issue: { marginBottom: 14 },
-  badgeRow: { flexDirection: "row", alignItems: "center", marginBottom: 3 },
+  statusRow: { flexDirection: "row", alignItems: "center", marginBottom: 6 },
+  statusChip: { borderRadius: 3, paddingHorizontal: 6, paddingVertical: 2, fontSize: 8, fontWeight: 600, marginRight: 8 },
+  statusDone: { backgroundColor: COLORS.tint, borderWidth: 0.5, borderColor: COLORS.gold, color: COLORS.gold },
+  statusNot: { backgroundColor: COLORS.ink, color: "#ffffff" },
+  muted: { fontSize: 9, color: COLORS.muted },
+  bullet: { fontSize: 10, lineHeight: 1.4, marginLeft: 8, marginBottom: 1 },
+  issue: { marginBottom: 14, marginTop: 6 },
+  badgeRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap", marginBottom: 3 },
   badge: { backgroundColor: COLORS.tint, borderWidth: 0.5, borderColor: COLORS.divider, borderRadius: 3, paddingHorizontal: 6, paddingVertical: 2, fontSize: 8, fontWeight: 600, marginRight: 8 },
   raised: { fontSize: 9, color: COLORS.muted },
   desc: { fontSize: 11, lineHeight: 1.4, marginTop: 2 },
@@ -223,16 +283,20 @@ var a = StyleSheet2.create({
   num: { position: "absolute", top: 4, right: 4, backgroundColor: COLORS.ink, color: "#ffffff", fontSize: 8, fontWeight: 600, paddingHorizontal: 5, paddingVertical: 2, borderRadius: 8 },
   stamp: { position: "absolute", bottom: 4, right: 4, backgroundColor: "#000000", color: "#ffffff", fontSize: 7, paddingHorizontal: 4, paddingVertical: 1.5 },
   missing: { alignItems: "center", justifyContent: "center" },
-  none: { fontSize: 12, color: COLORS.muted, marginTop: 30 }
+  none: { fontSize: 12, color: COLORS.muted, marginTop: 30 },
+  shows: { fontSize: 9, color: COLORS.muted, marginTop: 22 }
 });
-function IssueBlock({ issue, photos, tz, lead }) {
+var plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+function IssueBlock({ issue, photos, tz, showKind, lead }) {
   const body = safeText(issue.description) || safeText(issue.title);
   return /* @__PURE__ */ jsxs2(View2, { style: a.issue, wrap: issue.photos.length > 4, children: [
     lead,
     /* @__PURE__ */ jsxs2(View2, { style: a.badgeRow, children: [
+      showKind ? /* @__PURE__ */ jsx2(Text2, { style: a.badge, children: KIND_BADGE[issue.kind] }) : null,
       issue.tradeName ? /* @__PURE__ */ jsx2(Text2, { style: a.badge, children: safeText(issue.tradeName).toUpperCase() }) : null,
       /* @__PURE__ */ jsx2(Text2, { style: a.raised, children: formatRaised(safeText(issue.raisedByInitials), issue.raisedOn, tz) })
     ] }),
+    issue.status === "completed" && issue.completedOn ? /* @__PURE__ */ jsx2(Text2, { style: a.raised, children: `Completed ${formatRaised("", issue.completedOn, tz).replace("Raised by: ", "").trim()}` }) : null,
     /* @__PURE__ */ jsx2(Text2, { style: a.desc, children: body }),
     issue.photos.length > 0 ? /* @__PURE__ */ jsx2(View2, { style: a.photos, children: issue.photos.map((p, i) => {
       const bytes = photos[p.id] ?? null;
@@ -244,96 +308,78 @@ function IssueBlock({ issue, photos, tz, lead }) {
     }) }) : null
   ] });
 }
-function BuilderAuditDocument({ jobName, preparedFor, siteAddress, builtAt, timezone, summary, logo, photos }) {
-  const n = summary.identified;
-  return /* @__PURE__ */ jsxs2(Document, { title: `${safeText(jobName)} \u2013 Builder Site Audit`, author: "Public House Creative", children: [
-    /* @__PURE__ */ jsxs2(Page2, { size: "LETTER", style: s.page, children: [
-      /* @__PURE__ */ jsxs2(Cover, { ...{ jobName, preparedFor, siteAddress, builtAt, timezone, logo }, children: [
-        /* @__PURE__ */ jsxs2(Text2, { style: s.count, children: [
-          n,
-          " ",
-          n === 1 ? "Issue" : "Issues",
-          " Identified"
-        ] }),
-        /* @__PURE__ */ jsxs2(Text2, { style: [s.count, { marginTop: 4 }], children: [
-          summary.incomplete,
-          " ",
-          summary.incomplete === 1 ? "Issue" : "Issues",
-          " Incomplete"
-        ] }),
-        n === 0 ? /* @__PURE__ */ jsx2(Text2, { style: a.none, children: "No Pre-Install Corrections" }) : null
-      ] }),
-      /* @__PURE__ */ jsx2(Footer, {})
-    ] }),
-    n > 0 ? /* @__PURE__ */ jsxs2(Page2, { size: "LETTER", style: s.page, children: [
-      summary.rooms.map((room, ri) => /* @__PURE__ */ jsx2(View2, { children: room.issues.map((i, k) => /* @__PURE__ */ jsx2(
-        IssueBlock,
-        {
-          issue: i,
-          photos,
-          tz: timezone,
-          lead: k === 0 ? /* @__PURE__ */ jsxs2(View2, { children: [
-            ri > 0 ? /* @__PURE__ */ jsx2(View2, { style: a.divider }) : null,
-            /* @__PURE__ */ jsx2(Text2, { style: a.roomHeading, children: safeText(room.roomName) })
-          ] }) : void 0
-        },
-        i.id
-      )) }, room.roomId)),
-      /* @__PURE__ */ jsx2(Footer, {})
+function RoomHead({ room, first, tz }) {
+  const c = room.checklist;
+  return /* @__PURE__ */ jsxs2(View2, { children: [
+    !first ? /* @__PURE__ */ jsx2(View2, { style: a.divider }) : null,
+    /* @__PURE__ */ jsx2(Text2, { style: a.roomHeading, children: safeText(room.roomName) }),
+    c ? /* @__PURE__ */ jsxs2(View2, { style: a.statusRow, children: [
+      /* @__PURE__ */ jsx2(Text2, { style: [a.statusChip, c.completed ? a.statusDone : a.statusNot], children: c.completed ? "Completed" : "Not completed" }),
+      c.byWho && c.at ? /* @__PURE__ */ jsx2(Text2, { style: a.muted, children: formatRaised(safeText(c.byWho), c.at, tz).replace("Raised by:", "Last checked by") }) : null
     ] }) : null
   ] });
 }
-
-// src/RoomStatusDocument.tsx
-import { Document as Document2, Page as Page3, StyleSheet as StyleSheet3, Text as Text3, View as View3 } from "@react-pdf/renderer";
-import { jsx as jsx3, jsxs as jsxs3 } from "react/jsx-runtime";
-var t = StyleSheet3.create({
-  head: { flexDirection: "row", backgroundColor: COLORS.tint, paddingVertical: 6, paddingHorizontal: 6, fontWeight: 600 },
-  row: { flexDirection: "row", paddingVertical: 6, paddingHorizontal: 6 },
-  alt: { backgroundColor: COLORS.tint },
-  c1: { width: "22%" },
-  c2: { width: "16%" },
-  c3: { width: "20%" },
-  c4: { width: "34%" },
-  c5: { width: "8%", textAlign: "right" },
-  h: { fontSize: 9, fontWeight: 600, color: COLORS.muted },
-  title: { fontSize: 18, fontWeight: 600, marginBottom: 10 }
-});
-function RoomStatusDocument({ jobName, preparedFor, siteAddress, builtAt, timezone, logo, rows: rows2 }) {
-  const done2 = rows2.filter((r) => r.completed).length;
-  return /* @__PURE__ */ jsxs3(Document2, { title: `${safeText(jobName)} \u2013 Room Status`, author: "Public House Creative", children: [
-    /* @__PURE__ */ jsxs3(Page3, { size: "LETTER", style: s.page, children: [
-      /* @__PURE__ */ jsxs3(Cover, { ...{ jobName, preparedFor, siteAddress, builtAt, timezone, logo }, children: [
-        /* @__PURE__ */ jsx3(Text3, { style: s.count, children: "Room Status" }),
-        /* @__PURE__ */ jsxs3(Text3, { style: [s.coverLine, { marginTop: 6 }], children: [
-          done2,
-          " of ",
-          rows2.length,
+function ReportDocument({ jobName, preparedFor, siteAddress, builtAt, timezone, model, logo, photos }) {
+  const o = model.options;
+  const t = model.totals;
+  const showKind = o.kinds.length > 1 || o.kinds.length === 1 && o.kinds[0] !== "pre_install_correction";
+  const issueWord = (n) => n === 1 ? "Issue" : "Issues";
+  const shows = [
+    o.kinds.length > 0 ? `${o.kinds.map((k) => KIND_PLURAL[k]).join(", ")} (${o.issueStatus === "both" ? "open and completed" : o.issueStatus})` : null,
+    o.checklist === "all" ? "room status for every room" : o.checklist === "incomplete" ? "rooms not yet completed" : null,
+    o.photos === "none" ? "no photos" : o.photos === "annotated" ? "marked-up photos" : "original photos"
+  ].filter(Boolean).join(" \xB7 ");
+  const empty = model.rooms.length === 0;
+  return /* @__PURE__ */ jsxs2(Document, { title: `${safeText(jobName)} \u2013 ${reportTitle(o)}`, author: "Public House Creative", children: [
+    /* @__PURE__ */ jsxs2(Page2, { size: "LETTER", style: s.page, children: [
+      /* @__PURE__ */ jsxs2(Cover, { ...{ jobName, preparedFor, siteAddress, builtAt, timezone, logo }, title: reportTitle(o), children: [
+        o.kinds.length > 0 ? /* @__PURE__ */ jsxs2(Text2, { style: s.count, children: [
+          t.identified,
           " ",
-          rows2.length === 1 ? "room" : "rooms",
-          " completed"
+          issueWord(t.identified),
+          " Identified"
+        ] }) : null,
+        o.kinds.length > 0 ? /* @__PURE__ */ jsxs2(Text2, { style: [s.count, { marginTop: 4 }], children: [
+          t.incomplete,
+          " ",
+          issueWord(t.incomplete),
+          " Incomplete"
+        ] }) : null,
+        o.checklist === "all" ? /* @__PURE__ */ jsxs2(Text2, { style: [s.count, { marginTop: 4 }], children: [
+          t.roomsCompleted,
+          " of ",
+          plural(t.roomsWithChecklist, "Room", "Rooms"),
+          " Completed"
+        ] }) : null,
+        o.checklist === "incomplete" ? /* @__PURE__ */ jsxs2(Text2, { style: [s.count, { marginTop: 4 }], children: [
+          plural(t.roomsWithChecklist, "Room", "Rooms"),
+          " Not Completed"
+        ] }) : null,
+        empty ? /* @__PURE__ */ jsx2(Text2, { style: a.none, children: o.preset === "builder_site_audit" ? "No Pre-Install Corrections" : "Nothing to report for the options chosen" }) : null,
+        /* @__PURE__ */ jsxs2(Text2, { style: a.shows, children: [
+          "Shows: ",
+          shows
         ] })
       ] }),
-      /* @__PURE__ */ jsx3(Footer, {})
+      /* @__PURE__ */ jsx2(Footer, {})
     ] }),
-    /* @__PURE__ */ jsxs3(Page3, { size: "LETTER", style: s.page, children: [
-      /* @__PURE__ */ jsx3(Text3, { style: t.title, children: "Rooms" }),
-      /* @__PURE__ */ jsxs3(View3, { style: t.head, fixed: true, children: [
-        /* @__PURE__ */ jsx3(Text3, { style: [t.c1, t.h], children: "Room" }),
-        /* @__PURE__ */ jsx3(Text3, { style: [t.c2, t.h], children: "Status" }),
-        /* @__PURE__ */ jsx3(Text3, { style: [t.c3, t.h], children: "Checked by / when" }),
-        /* @__PURE__ */ jsx3(Text3, { style: [t.c4, t.h], children: "Not done" }),
-        /* @__PURE__ */ jsx3(Text3, { style: [t.c5, t.h], children: "Open" })
-      ] }),
-      rows2.map((r, i) => /* @__PURE__ */ jsxs3(View3, { style: [t.row, i % 2 === 1 ? t.alt : {}], wrap: false, children: [
-        /* @__PURE__ */ jsx3(Text3, { style: t.c1, children: safeText(r.roomName) }),
-        /* @__PURE__ */ jsx3(Text3, { style: t.c2, children: r.completed ? "Completed" : "Not completed" }),
-        /* @__PURE__ */ jsx3(Text3, { style: t.c3, children: r.byWho ? `${safeText(r.byWho)}${r.at ? " " + formatStamp(r.at, timezone) : ""}` : "\u2014" }),
-        /* @__PURE__ */ jsx3(Text3, { style: t.c4, children: r.outstanding.length ? safeText(r.outstanding.join("; ")) : "\u2014" }),
-        /* @__PURE__ */ jsx3(Text3, { style: t.c5, children: r.openIssues })
-      ] }, `${r.roomName}-${i}`)),
-      /* @__PURE__ */ jsx3(Footer, {})
-    ] })
+    !empty ? /* @__PURE__ */ jsxs2(Page2, { size: "LETTER", style: s.page, children: [
+      model.rooms.map((room, ri) => /* @__PURE__ */ jsxs2(View2, { children: [
+        room.issues.length === 0 ? /* @__PURE__ */ jsxs2(View2, { wrap: false, children: [
+          /* @__PURE__ */ jsx2(RoomHead, { room, first: ri === 0, tz: timezone }),
+          room.checklist && !room.checklist.completed ? room.checklist.outstanding.map((x) => /* @__PURE__ */ jsx2(Text2, { style: a.bullet, children: `\u2022 ${safeText(x)}` }, x)) : null,
+          room.checklist === null ? /* @__PURE__ */ jsx2(Text2, { style: a.muted, children: "Nothing to list" }) : null
+        ] }) : null,
+        room.issues.length > 0 ? /* @__PURE__ */ jsxs2(View2, { children: [
+          /* @__PURE__ */ jsxs2(View2, { wrap: false, children: [
+            /* @__PURE__ */ jsx2(RoomHead, { room, first: ri === 0, tz: timezone }),
+            room.checklist && !room.checklist.completed ? room.checklist.outstanding.map((x) => /* @__PURE__ */ jsx2(Text2, { style: a.bullet, children: `\u2022 ${safeText(x)}` }, x)) : null
+          ] }),
+          room.issues.map((i) => /* @__PURE__ */ jsx2(IssueBlock, { issue: i, photos, tz: timezone, showKind }, i.id))
+        ] }) : null
+      ] }, room.roomId)),
+      /* @__PURE__ */ jsx2(Footer, {})
+    ] }) : null
   ] });
 }
 
@@ -425,133 +471,114 @@ function initialsOf(fullName, email) {
   return pick(letters(fullName ?? "")) || pick(letters((email ?? "").split("@")[0] ?? "")) || "?";
 }
 var statusOf = (i) => i.voided_at ? "void" : i.completed_at ? "completed" : "open";
-function choosePhotos(photos) {
+function choosePhotos(photos, mode = "annotated") {
+  if (mode === "none") return [];
   const confirmed = photos.filter((p) => p.confirmed_at);
   const originals = confirmed.filter((p) => !p.annotated_from);
   return originals.map((o) => {
-    const copies = confirmed.filter((p) => p.annotated_from === o.id).sort((a2, b) => b.captured_at.localeCompare(a2.captured_at));
+    const copies = mode === "annotated" ? confirmed.filter((p) => p.annotated_from === o.id).sort((a2, b) => b.captured_at.localeCompare(a2.captured_at)) : [];
     const shown = copies[0] ?? o;
     return { id: shown.id, path: shown.storage_path, capturedAt: o.captured_at, issueId: o.issue_id, originalId: o.id };
   }).sort((a2, b) => a2.capturedAt.localeCompare(b.capturedAt));
 }
-async function loadBuilderAuditData(db, projectId) {
+async function loadReportData(db, projectId, options) {
   const project = await db.getProject(projectId);
   if (!project) throw new ReportError("project_not_found", "That job was not found, or you do not have access to it.");
-  const [rooms, issues, photos] = await Promise.all([db.listRooms(projectId), db.listIssues(projectId), db.listIssuePhotos(projectId)]);
-  const pre = issues.filter((i) => i.kind === "pre_install_correction");
-  const profiles = await db.listProfiles([...new Set(pre.map((i) => i.raised_by))]);
-  const who = new Map(profiles.map((p) => [p.id, initialsOf(p.full_name, p.email)]));
-  const chosen = choosePhotos(photos);
-  const photoPaths = {};
-  const reportIssues = pre.map((i) => {
-    const mine = chosen.filter((p) => p.issueId === i.id);
-    for (const p of mine) photoPaths[p.id] = p.path;
-    return {
-      id: i.id,
-      roomId: i.room_id,
-      kind: i.kind,
-      status: statusOf(i),
-      tradeName: i.trade_name,
-      title: i.title,
-      description: i.description ?? "",
-      raisedByInitials: who.get(i.raised_by) ?? "?",
-      raisedOn: i.raised_at,
-      photos: mine.map((p) => ({ id: p.id, capturedAt: p.capturedAt }))
-    };
-  });
-  return { project, summary: builderAuditSummary(reportIssues, rooms), photoPaths };
-}
-async function loadRoomStatusData(db, projectId) {
-  const [rooms, issues, checks] = await Promise.all([db.listRooms(projectId), db.listIssues(projectId), db.listRoomChecks(projectId)]);
-  const profiles = await db.listProfiles([...new Set(checks.map((c) => c.checked_by))]);
-  const who = new Map(profiles.map((p) => [p.id, initialsOf(p.full_name, p.email)]));
-  return rooms.map((room) => {
-    const mine = checks.filter((c) => c.room_id === room.id);
-    const st = roomStatus(ROOM_CHECK_ITEMS, mine.map((c) => ({ key: c.item_key, state: c.state, note: c.note })));
-    const latest = mine.slice().sort((a2, b) => b.checked_at.localeCompare(a2.checked_at))[0];
-    const outstanding = mine.length === 0 ? ["Checklist not started"] : st.outstanding.map((o) => o.note ? `${o.label}: ${o.note}` : o.label);
-    return {
-      roomName: room.name,
+  const [rooms, issues, photos, checks] = await Promise.all([db.listRooms(projectId), db.listIssues(projectId), options.photos === "none" ? Promise.resolve([]) : db.listIssuePhotos(projectId), db.listRoomChecks(projectId)]);
+  const wantedKinds = new Set(options.kinds);
+  const mine = issues.filter((i) => wantedKinds.has(i.kind));
+  const people = await db.listProfiles([.../* @__PURE__ */ new Set([...mine.map((i) => i.raised_by), ...checks.map((c) => c.checked_by)])]);
+  const who = new Map(people.map((p) => [p.id, initialsOf(p.full_name, p.email)]));
+  const chosen = choosePhotos(photos, options.photos);
+  const source = mine.map((i) => ({
+    id: i.id,
+    roomId: i.room_id,
+    kind: i.kind,
+    status: statusOf(i),
+    tradeName: i.trade_name,
+    title: i.title,
+    description: i.description ?? "",
+    raisedByInitials: who.get(i.raised_by) ?? "?",
+    raisedOn: i.raised_at,
+    completedOn: i.completed_at,
+    photos: chosen.filter((p) => p.issueId === i.id).map((p) => ({ id: p.id, capturedAt: p.capturedAt }))
+  }));
+  const checklist = {};
+  for (const room of rooms) {
+    const marks = checks.filter((c) => c.room_id === room.id);
+    const st = roomStatus(ROOM_CHECK_ITEMS, marks.map((c) => ({ key: c.item_key, state: c.state, note: c.note })));
+    const latest = marks.slice().sort((a2, b) => b.checked_at.localeCompare(a2.checked_at))[0];
+    checklist[room.id] = {
       completed: st.completed,
+      started: marks.length > 0,
+      outstanding: marks.length === 0 ? ["Checklist not started"] : st.outstanding.map((o) => o.note ? `${o.label}: ${o.note}` : o.label),
       byWho: latest ? who.get(latest.checked_by) ?? "?" : null,
-      at: latest?.checked_at ?? null,
-      outstanding,
-      openIssues: issues.filter((i) => i.room_id === room.id && statusOf(i) === "open").length
+      at: latest?.checked_at ?? null
     };
-  });
+  }
+  const model = buildReportModel({ rooms, issues: source, checklist }, options);
+  const photoPaths = {};
+  for (const room of model.rooms) for (const i of room.issues) for (const p of i.photos) {
+    const c = chosen.find((x) => x.id === p.id);
+    if (c) photoPaths[p.id] = c.path;
+  }
+  return { project, model, photoPaths };
 }
 
 // src/server/buildReport.ts
-async function buildReport(deps, projectId, type) {
+async function buildReport(deps, projectId, options) {
   const { db, storage, timezone } = deps;
   const now = deps.now ?? (() => /* @__PURE__ */ new Date());
   const limit = deps.maxBytes ?? MAX_PDF_BYTES;
   const logo = deps.logo ?? readFileSync(LOGO_FILE);
   const builtAt = now().toISOString();
-  let pdf;
-  let identified = 0;
-  let incomplete = 0;
+  const data = await loadReportData(db, projectId, options);
+  const photos = {};
   let photosMissing = 0;
-  if (type === "builder_site_audit") {
-    const data = await loadBuilderAuditData(db, projectId);
-    const photos = {};
-    const entries = Object.entries(data.photoPaths);
-    let next = 0;
-    const worker = async () => {
-      while (next < entries.length) {
-        const [id, path2] = entries[next++];
-        try {
-          const raw = await storage.download("issue-photos", path2);
-          photos[id] = raw ? await prepareImage(raw) : null;
-        } catch {
-          photos[id] = null;
-        }
-        if (!photos[id]) photosMissing++;
+  const entries = Object.entries(data.photoPaths);
+  let next = 0;
+  const worker = async () => {
+    while (next < entries.length) {
+      const [id, path2] = entries[next++];
+      try {
+        const raw = await storage.download("issue-photos", path2);
+        photos[id] = raw ? await prepareImage(raw) : null;
+      } catch {
+        photos[id] = null;
       }
-    };
-    await Promise.all(Array.from({ length: Math.min(4, entries.length) }, worker));
-    identified = data.summary.identified;
-    incomplete = data.summary.incomplete;
-    pdf = await renderReport(createElement(BuilderAuditDocument, {
-      jobName: data.project.name,
-      preparedFor: data.project.prepared_for_name,
-      siteAddress: data.project.address,
-      builtAt,
-      timezone,
-      summary: data.summary,
-      logo,
-      photos
-    }));
-  } else {
-    const project = await db.getProject(projectId);
-    if (!project) throw new ReportError("project_not_found", "That job was not found, or you do not have access to it.");
-    const rows2 = await loadRoomStatusData(db, projectId);
-    pdf = await renderReport(createElement(RoomStatusDocument, {
-      jobName: project.name,
-      preparedFor: project.prepared_for_name,
-      siteAddress: project.address,
-      builtAt,
-      timezone,
-      logo,
-      rows: rows2
-    }));
-  }
+      if (!photos[id]) photosMissing++;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, entries.length) }, worker));
+  const pdf = await renderReport(createElement(ReportDocument, {
+    jobName: data.project.name,
+    preparedFor: data.project.prepared_for_name,
+    siteAddress: data.project.address,
+    builtAt,
+    timezone,
+    model: data.model,
+    logo,
+    photos
+  }));
   if (pdf.length > limit) throw new ReportTooLargeError(pdf.length, limit);
   const reportId = (deps.newId ?? (() => crypto.randomUUID()))();
   const path = `${projectId}/${reportId}.pdf`;
   await storage.upload("reports", path, pdf);
-  await db.createReport({ id: reportId, projectId, type, path, bytes: pdf.length });
+  const type = options.preset;
+  await db.createReport({ id: reportId, projectId, type, path, bytes: pdf.length, options });
   let removedReports = 0;
   try {
     removedReports = (await cleanupReports({ db, storage, now }, projectId, type, reportId)).removedReports;
   } catch (e) {
     console.error("report cleanup failed", e instanceof Error ? e.message : e);
   }
-  return { reportId, bytes: pdf.length, identified, incomplete, photosMissing, removedReports };
+  const t = data.model.totals;
+  return { reportId, bytes: pdf.length, identified: t.identified, incomplete: t.incomplete, photosMissing, removedReports };
 }
 
 // src/server/sendReport.ts
-var kindOf = (r) => r.report_type === "room_status" ? "Room Status" : "Site Audit";
+var KIND_NAME = { builder_site_audit: "Site Audit", room_status: "Room Status", service: "Service Report", custom: "Project Report" };
+var kindOf = (r) => KIND_NAME[r.report_type];
 async function load(deps, reportId) {
   const report = await deps.db.getReport(reportId);
   if (!report) throw new ReportError("report_not_found", "That report was not found, or you do not have access to it.");
@@ -625,6 +652,58 @@ ${bodyText(null, project.name, kindOf(report))}`,
     attachment: { filename: safeFileName(project.name, date, kindOf(report)), content: file, contentType: "application/pdf" }
   });
 }
+var MAX_SHARE_RECIPIENTS = 10;
+function checkColleagueAddresses(raw, domain) {
+  const d = domain.trim().replace(/^@/, "").toLowerCase();
+  const emails = [...new Set(raw.map((e) => e.trim()))].filter((e) => e !== "");
+  if (emails.length === 0) return { ok: false, code: "invalid_recipient", message: "Add at least one colleague's email address." };
+  if (emails.length > MAX_SHARE_RECIPIENTS) return { ok: false, code: "too_many_recipients", message: `Share with at most ${MAX_SHARE_RECIPIENTS} people at a time.` };
+  for (const e of emails) {
+    if (!isValidEmail(e)) return { ok: false, code: "invalid_recipient", message: `"${e}" does not look like an email address.` };
+    if (e.slice(e.lastIndexOf("@") + 1).toLowerCase() !== d) return { ok: false, code: "recipient_not_phc", message: `"${e}" is not a PHC address. Colleagues must be at @${d}. Use Send to builder for the builder.` };
+  }
+  return { ok: true, emails };
+}
+async function shareReport(deps, reportId, recipients, sharedBy) {
+  const checked = checkColleagueAddresses(recipients, deps.phcDomain);
+  if (!checked.ok) throw new ReportError(checked.code, checked.message);
+  const { report, project, date } = await load(deps, reportId);
+  if (report.status === "queued") throw new ReportError("report_already_queued", "This report is being emailed right now. Wait for it to finish.");
+  const file = await deps.storage.download("reports", report.storage_path);
+  if (!file) throw new ReportError("pdf_missing", "The PDF file could not be found. Build the report again.");
+  const sentTo = [];
+  const failed = [];
+  for (const to of checked.emails) {
+    try {
+      await deps.transport.send({
+        from: deps.from,
+        to,
+        subject: `${project.name} \u2013 ${kindOf(report)}`,
+        text: `${sharedBy ? `${sharedBy} shared` : "A colleague shared"} the ${kindOf(report).toLowerCase()} for ${project.name} with you. The PDF is attached.
+
+Public House Creative (internal: not for the builder or client)`,
+        attachment: { filename: safeFileName(project.name, date, kindOf(report)), content: file, contentType: "application/pdf" }
+      });
+      sentTo.push(to);
+    } catch {
+      failed.push(to);
+    }
+  }
+  if (sentTo.length > 0) {
+    try {
+      await deps.db.markReportShared(reportId, sentTo);
+    } catch {
+      throw new ReportError("sent_not_recorded", "The email was sent but could not be recorded. Check the Sent folder before trying again.");
+    }
+    try {
+      await cleanupReports(deps, report.project_id, report.report_type, reportId);
+    } catch (e) {
+      console.error("report cleanup failed", e instanceof Error ? e.message : e);
+    }
+  }
+  if (failed.length > 0) throw new ReportError("share_failed", `${sentTo.length > 0 ? `Sent to ${sentTo.join(", ")}. ` : ""}Could not send to ${failed.join(", ")}. Try those again.`);
+  return { sentTo };
+}
 
 // src/server/handler.ts
 var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -637,6 +716,10 @@ var STATUS = {
   report_not_queued: 409,
   invalid_recipient: 422,
   no_recipient: 422,
+  recipient_not_phc: 422,
+  too_many_recipients: 422,
+  bad_options: 400,
+  nothing_selected: 422,
   report_too_large: 413,
   not_configured: 500,
   pdf_missing: 409
@@ -649,7 +732,7 @@ async function handleReportsRequest(req, ctx) {
   const token = m[1];
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const action = body.action;
-  if (action !== "build" && action !== "send" && action !== "sendTest" && action !== "print") return bad(400, "bad_request", "Unknown action.");
+  if (action !== "build" && action !== "send" && action !== "sendTest" && action !== "print" && action !== "share") return bad(400, "bad_request", "Unknown action.");
   try {
     const user = await ctx.getUser(token);
     if (!user) return bad(401, "not_signed_in", "Sign in again.");
@@ -657,16 +740,24 @@ async function handleReportsRequest(req, ctx) {
     const timezone = ctx.env.REPORT_TIMEZONE || "America/Phoenix";
     if (action === "build") {
       const projectId = String(body.projectId ?? "");
-      const type = body.type;
-      if (!UUID.test(projectId) || type !== "builder_site_audit" && type !== "room_status") return bad(400, "bad_request", "A job and a report type are required.");
+      if (!UUID.test(projectId)) return bad(400, "bad_request", "A job is required.");
+      const options = normalizeReportOptions(body.options);
+      if (!options.ok) return bad(options.error.code === "nothing_selected" ? 422 : 400, options.error.code, options.error.message);
       const deps2 = { db, storage, timezone, ...ctx.logo ? { logo: ctx.logo } : {} };
-      return { status: 200, json: { ...await buildReport(deps2, projectId, type) } };
+      return { status: 200, json: { ...await buildReport(deps2, projectId, options.value) } };
     }
     const reportId = String(body.reportId ?? "");
     if (!UUID.test(reportId)) return bad(400, "bad_request", "A report is required.");
     if (action === "print") {
       await printReport({ db, storage }, reportId);
       return { status: 200, json: { status: "printed" } };
+    }
+    if (action === "share") {
+      if (!ctx.env.PHC_EMAIL_DOMAIN) return bad(500, "not_configured", "Sharing with colleagues is not set up yet: the PHC_EMAIL_DOMAIN setting is missing in Vercel.");
+      if (!ctx.env.REPORT_FROM) return bad(500, "not_configured", "Sending is not set up yet: the REPORT_FROM setting is missing in Vercel.");
+      const recipients = Array.isArray(body.recipients) ? body.recipients.filter((x) => typeof x === "string") : [];
+      const r = await shareReport({ db, storage, transport: ctx.transport(), from: ctx.env.REPORT_FROM, timezone, phcDomain: ctx.env.PHC_EMAIL_DOMAIN }, reportId, recipients, user.email);
+      return { status: 200, json: { status: "shared", to: r.sentTo } };
     }
     const from = ctx.env.REPORT_FROM;
     if (!from) return bad(500, "not_configured", "Sending is not set up yet: the REPORT_FROM setting is missing in Vercel.");
@@ -686,14 +777,14 @@ async function handleReportsRequest(req, ctx) {
     return { status: 200, json: { status: "sent", to: project.prepared_for_email } };
   } catch (e) {
     if (e instanceof ReportTooLargeError) return { status: 413, json: { error: e.code, message: e.message, bytes: e.bytes, limit: e.limit } };
-    if (e instanceof ReportError) return bad(STATUS[e.code] ?? (e.code === "send_failed" || e.code === "sent_not_recorded" ? 502 : 500), e.code, e.message);
+    if (e instanceof ReportError) return bad(STATUS[e.code] ?? (e.code === "send_failed" || e.code === "share_failed" || e.code === "sent_not_recorded" ? 502 : 500), e.code, e.message);
     console.error("reports api error", e instanceof Error ? e.message : e);
     return bad(500, "server_error", "Something went wrong on the server. Nothing was sent.");
   }
 }
 
 // src/server/supabaseAdapters.ts
-var CODES = ["report_already_queued", "report_already_sent", "report_not_queued", "invalid_recipient", "forbidden"];
+var CODES = ["too_many_recipients", "report_already_queued", "report_already_sent", "report_not_queued", "invalid_recipient", "forbidden"];
 function fail(error) {
   const code = CODES.find((c) => error.message.includes(c));
   if (code) throw new ReportError(code, code === "forbidden" ? "You do not have permission to do that." : code);
@@ -724,7 +815,7 @@ function supabaseDb(sb) {
     },
     listRoomChecks: (projectId) => rows(sb.from("room_checks").select("room_id,item_key,state,note,checked_by,checked_at").eq("project_id", projectId)),
     async createReport(a2) {
-      const { data, error } = await sb.rpc("create_report", { p_id: a2.id, p_project: a2.projectId, p_type: a2.type, p_path: a2.path, p_bytes: a2.bytes });
+      const { data, error } = await sb.rpc("create_report", { p_id: a2.id, p_project: a2.projectId, p_type: a2.type, p_path: a2.path, p_bytes: a2.bytes, p_options: a2.options });
       if (error) fail(error);
       return data;
     },
@@ -744,6 +835,10 @@ function supabaseDb(sb) {
     },
     async markReportPrinted(id) {
       const { error } = await sb.rpc("mark_report_printed", { p_report_id: id });
+      if (error) fail(error);
+    },
+    async markReportShared(id, emails) {
+      const { error } = await sb.rpc("mark_report_shared", { p_report_id: id, p_emails: emails });
       if (error) fail(error);
     },
     async pruneReports(projectId, type, keepId) {
@@ -810,7 +905,7 @@ async function handler(req, res) {
       return { db: supabaseDb(sb), storage: supabaseStorage(sb) };
     },
     transport: () => getTransport(env),
-    env: { ...env.REPORT_FROM ? { REPORT_FROM: env.REPORT_FROM } : {}, ...env.REPORT_TIMEZONE ? { REPORT_TIMEZONE: env.REPORT_TIMEZONE } : {} }
+    env: { ...env.REPORT_FROM ? { REPORT_FROM: env.REPORT_FROM } : {}, ...env.REPORT_TIMEZONE ? { REPORT_TIMEZONE: env.REPORT_TIMEZONE } : {}, ...env.PHC_EMAIL_DOMAIN ? { PHC_EMAIL_DOMAIN: env.PHC_EMAIL_DOMAIN } : {} }
   });
   res.status(out.status).json(out.json);
 }

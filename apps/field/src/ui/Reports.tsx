@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { isValidEmail } from "@phc/domain";
-import { loadRoomStatusData } from "@phc/reports/src/server/loadReportData";
+import { isValidEmail, PRESET_OPTIONS, type ChecklistMode, type IssueKind, type IssueStatusFilter, type PhotoMode, type ReportOptions, type ReportPreset } from "@phc/domain";
+import { loadReportData } from "@phc/reports/src/server/loadReportData";
 import { supabaseDb } from "@phc/reports/src/server/supabaseAdapters";
-import type { RoomStatusRow } from "@phc/reports/src/RoomStatusDocument";
 import type { ReportRow } from "@phc/reports/src/server/ports";
 import type { AppCtx } from "../App";
 import { supabase } from "../lib/supabase";
 import { loadRoles } from "../lib/issues";
 import { callReportsApi, canManageReports, describeReportProblem, reportStatusLabel, savedLabel, stuckQueued, type ReportsRequest } from "../lib/reportsApi";
+import { applyPreset, change, KIND_PLURAL, optionsProblem, PRESET_LABEL, setKind, summarizeOptions } from "../lib/reportOptionsUi";
 import { useLive } from "./useLive";
 import { fmtWhen } from "./when";
 
 interface Contact { name: string; email: string; address: string }
 const SOURCE_NOTE: Record<string, string> = { cockpit: "Filled in from Cockpit. Edit anything that is wrong; your change is kept.", manual: "Entered by hand." };
-const TYPE_LABEL: Record<ReportRow["report_type"], string> = { builder_site_audit: "Builder site audit", room_status: "Room status" };
+const TYPE_LABEL: Record<ReportRow["report_type"], string> = { builder_site_audit: "Builder site audit", room_status: "Room status", service: "Service report", custom: "Custom report" };
+const KIND_LIST: IssueKind[] = ["pre_install_correction", "punch_item", "missing_part", "damaged_part", "touch_up"];
+const PRESETS: ReportPreset[] = ["builder_site_audit", "service", "room_status", "custom"];
+interface RoomLine { roomName: string; completed: boolean; byWho: string | null; at: string | null; outstanding: string[]; openIssues: number }
 const STATUS_CLASS: Record<ReportRow["status"], string> = { built: "info", queued: "progress", sent: "good", failed: "bad" };
 
 /**
@@ -28,7 +31,10 @@ export function Reports({ ctx, projectId }: { ctx: AppCtx; projectId: string }) 
   const [contact, setContact] = useState<Contact>({ name: "", email: "", address: "" });
   const [saved, setSaved] = useState<Contact | null>(null);
   const [source, setSource] = useState<string | null>(null);
-  const [rooms, setRooms] = useState<RoomStatusRow[] | null>(null);
+  const [rooms, setRooms] = useState<RoomLine[] | null>(null);
+  const [opts, setOpts] = useState<ReportOptions>(applyPreset("builder_site_audit"));
+  const [shareFor, setShareFor] = useState<string | null>(null);
+  const [emails, setEmails] = useState("");
   const [reports, setReports] = useState<ReportRow[] | null>(null);
   const [message, setMessage] = useState<{ kind: "ok" | "bad"; text: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -42,7 +48,7 @@ export function Reports({ ctx, projectId }: { ctx: AppCtx; projectId: string }) 
       const sb = supabase;
       const [p, r, list] = await Promise.all([
         sb.from("projects").select("prepared_for_name,prepared_for_email,address,contact_source").eq("id", projectId).maybeSingle(),
-        loadRoomStatusData(supabaseDb(sb), projectId),
+        loadReportData(supabaseDb(sb), projectId, { preset: "custom", kinds: ["pre_install_correction", "punch_item", "missing_part", "damaged_part", "touch_up"], issueStatus: "open", checklist: "all", emptyRooms: true, photos: "none" }),
         sb.from("reports").select("*").eq("project_id", projectId).order("built_at", { ascending: false }),
       ]);
       if (p.error) throw new Error(p.error.message);
@@ -50,7 +56,8 @@ export function Reports({ ctx, projectId }: { ctx: AppCtx; projectId: string }) 
       const c = { name: p.data?.prepared_for_name ?? "", email: p.data?.prepared_for_email ?? "", address: p.data?.address ?? "" };
       setSource((p.data as { contact_source?: string | null } | null)?.contact_source ?? null);
       setSaved(c); setContact((cur) => (cur.name || cur.email || cur.address ? cur : c));
-      setRooms(r); setReports((list.data ?? []) as ReportRow[]);
+      setRooms(r.model.rooms.map((m) => ({ roomName: m.roomName, completed: !!m.checklist?.completed, byWho: m.checklist?.byWho ?? null, at: m.checklist?.at ?? null, outstanding: m.checklist?.outstanding ?? [], openIssues: m.issues.length })));
+      setReports((list.data ?? []) as ReportRow[]);
     } catch (e) {
       setMessage({ kind: "bad", text: `Could not load this job's report data: ${e instanceof Error ? e.message : "unknown error"}` });
     }
@@ -70,8 +77,9 @@ export function Reports({ ctx, projectId }: { ctx: AppCtx; projectId: string }) 
     return r.ok;
   }, [load]);
 
-  const buildAudit = useCallback((doneText?: string) => run("build-audit", { action: "build", projectId, type: "builder_site_audit" },
-    (d) => `${doneText ?? "Site audit built from the latest data"} (${d.identified} identified, ${d.incomplete} incomplete${Number(d.photosMissing) > 0 ? `, ${d.photosMissing} photo(s) could not be loaded` : ""}).`), [run, projectId]);
+  const buildWith = useCallback((o: ReportOptions, doneText?: string) => run("build", { action: "build", projectId, options: o },
+    (d) => `${doneText ?? "Report built from the latest data"} (${d.identified} issue${d.identified === 1 ? "" : "s"} listed, ${d.incomplete} incomplete${Number(d.photosMissing) > 0 ? `, ${d.photosMissing} photo(s) could not be loaded` : ""}).`), [run, projectId]);
+  const buildAudit = useCallback((doneText?: string) => buildWith(PRESET_OPTIONS.builder_site_audit, doneText ?? "Site audit built from the latest data"), [buildWith]);
 
   // Opening the screen builds the site audit from the newest data, so what the manager previews, prints or sends is current.
   useEffect(() => {
@@ -115,9 +123,14 @@ export function Reports({ ctx, projectId }: { ctx: AppCtx; projectId: string }) 
     await run(`print-${report.id}`, { action: "print", reportId: report.id }, () => "Marked as printed. Print it from the PDF window. It replaces the previously saved report of this kind.");
   }
 
+  async function shareWith(report: ReportRow) {
+    const list = emails.split(/[\s,;]+/).filter(Boolean);
+    const ok = await run(`share-${report.id}`, { action: "share", reportId: report.id, recipients: list }, (d) => `Shared with ${(d.to as string[]).join(", ")}. It replaces the previously saved report of this kind.`);
+    if (ok) { setShareFor(null); setEmails(""); }
+  }
+
   const canSendToBuilder = !!saved?.email && isValidEmail(saved.email) && !dirty;
   const now = Date.now();
-  const hasAudit = (reports ?? []).some((r) => r.report_type === "builder_site_audit");
 
   return (
     <>
@@ -159,18 +172,32 @@ export function Reports({ ctx, projectId }: { ctx: AppCtx; projectId: string }) 
         </ul>
       </section>
 
-      <section className="card">
-        <h2>Reports</h2>
-        <p className="muted small">The site audit is built from the latest data every time you open this screen. Only the latest report you email or print is kept (one of each kind); previews are deleted when a newer report replaces them.</p>
-        <div className="btnrow">
-          <button className="primary" disabled={busy !== null} onClick={() => void buildAudit()} data-testid="build-audit">{busy === "build-audit" ? "Building…" : hasAudit ? "Rebuild site audit" : "Build site audit"}</button>
-          <button disabled={busy !== null} onClick={() => void run("build-status", { action: "build", projectId, type: "room_status" }, () => "Status PDF built from the latest data.")} data-testid="build-status">{busy === "build-status" ? "Building…" : "Create status PDF"}</button>
+      <section className="card" data-testid="report-builder">
+        <h2>Build a report</h2>
+        <p className="muted small">Pick a starting point, then choose what goes on the page. The site audit is built for you when you open this screen; only the latest report you email, share or print is kept (one of each kind), previews are replaced.</p>
+        <div className="btnrow" role="group" aria-label="Report type">
+          {PRESETS.map((p) => <button key={p} className={opts.preset === p ? "on" : ""} aria-pressed={opts.preset === p} onClick={() => setOpts(applyPreset(p))} data-testid={`preset-${p}`}>{PRESET_LABEL[p]}</button>)}
         </div>
+        <fieldset className="opts" data-testid="opt-kinds"><legend>Issues to list</legend>
+          {KIND_LIST.map((k) => <label key={k} className="check"><input type="checkbox" checked={opts.kinds.includes(k)} onChange={(e) => setOpts(setKind(opts, k, e.target.checked))} data-testid={`kind-${k}`} /> {KIND_PLURAL[k]}</label>)}
+        </fieldset>
+        <fieldset className="opts" data-testid="opt-status"><legend>Issue status</legend>
+          {([["open", "Open only"], ["completed", "Completed only"], ["both", "Open and completed"]] as [IssueStatusFilter, string][]).map(([v, l]) => <label key={v} className="check"><input type="radio" name="issue-status" checked={opts.issueStatus === v} onChange={() => setOpts(change(opts, { issueStatus: v }))} data-testid={`status-${v}`} /> {l}</label>)}
+        </fieldset>
+        <fieldset className="opts" data-testid="opt-checklist"><legend>Room status</legend>
+          {([["none", "Do not show"], ["incomplete", "Rooms not completed only"], ["all", "All rooms (completed and not)"]] as [ChecklistMode, string][]).map(([v, l]) => <label key={v} className="check"><input type="radio" name="checklist" checked={opts.checklist === v} onChange={() => setOpts(change(opts, { checklist: v }))} data-testid={`checklist-${v}`} /> {l}</label>)}
+          <label className="check"><input type="checkbox" checked={opts.emptyRooms} onChange={(e) => setOpts(change(opts, { emptyRooms: e.target.checked }))} data-testid="opt-empty-rooms" /> Also list rooms with nothing to show</label>
+        </fieldset>
+        <fieldset className="opts" data-testid="opt-photos"><legend>Photos (one or the other)</legend>
+          {([["annotated", "Marked-up photos (the original if never marked up)"], ["original", "Original photos only"], ["none", "No photos"]] as [PhotoMode, string][]).map(([v, l]) => <label key={v} className="check"><input type="radio" name="photos" checked={opts.photos === v} onChange={() => setOpts(change(opts, { photos: v }))} data-testid={`photos-${v}`} /> {l}</label>)}
+        </fieldset>
+        {optionsProblem(opts) && <p className="err" data-testid="opts-problem">{optionsProblem(opts)}</p>}
+        <button className="primary" disabled={busy !== null || optionsProblem(opts) !== null} onClick={() => void buildWith(opts)} data-testid="build-report">{busy === "build" ? "Building…" : `Build ${PRESET_LABEL[opts.preset].toLowerCase()} report`}</button>
       </section>
 
       <section className="card" data-testid="report-list">
         {reports === null && <p className="muted">Loading…</p>}
-        {reports?.length === 0 && <p className="muted">{busy === "build-audit" ? "Building the site audit from the latest data…" : "No reports yet."}</p>}
+        {reports?.length === 0 && <p className="muted">{busy === "build" ? "Building the report from the latest data…" : "No reports yet."}</p>}
         <ul className="plain">
           {reports?.map((r) => {
             const stuck = stuckQueued(r, now);
@@ -178,26 +205,40 @@ export function Reports({ ctx, projectId }: { ctx: AppCtx; projectId: string }) 
             return (
               <li key={r.id} className="row static" data-testid="report-row" data-status={r.status} data-saved={kind === "preview" ? "no" : "yes"}>
                 <strong>{TYPE_LABEL[r.report_type]}</strong>{" "}
-                {kind === "preview" ? <span className="chip gray" data-testid="report-kind">Preview, not saved</span> : <span className="chip good" data-testid="report-kind">{kind === "sent" ? "Sent" : kind === "printed" ? "Printed" : "Sent and printed"}</span>}{" "}
+                {kind === "preview" ? <span className="chip gray" data-testid="report-kind">Preview, not saved</span> : <span className="chip good" data-testid="report-kind">{kind === "sent" ? "Sent" : kind === "printed" ? "Printed" : kind === "shared" ? "Shared" : "Sent and printed"}</span>}{" "}
                 {(r.status === "queued" || r.status === "failed") && <span className={`chip ${STATUS_CLASS[r.status]}`}>{reportStatusLabel(r.status)}</span>}
                 <div className="muted small">
                   Built {fmtWhen(r.built_at)} · {(r.file_size / 1024 / 1024).toFixed(1)} MB
-                  {r.sent_at ? ` · Sent ${fmtWhen(r.sent_at)} to ${r.recipient_email}` : ""}{r.printed_at ? ` · Printed ${fmtWhen(r.printed_at)}` : ""}
+                  {r.sent_at ? ` · Sent ${fmtWhen(r.sent_at)} to ${r.recipient_email}` : ""}{r.printed_at ? ` · Printed ${fmtWhen(r.printed_at)}` : ""}{r.shared_at && r.shared_to ? ` · Shared ${fmtWhen(r.shared_at)} with ${r.shared_to.join(", ")}` : ""}
                 </div>
+                {r.options && <p className="muted small" data-testid="report-options">{summarizeOptions(r.options)}</p>}
                 {r.status === "failed" && r.error && <p className="err small" data-testid="report-error">{r.error}</p>}
                 {stuck && <p className="small" data-testid="report-stuck">Still sending after 10 minutes. Check the Sent folder first: the email may have gone out. If it did not, you can try again.</p>}
                 <div className="btnrow">
                   <button onClick={() => void openPdf(r)} data-testid="report-preview">Preview PDF</button>
                   <button disabled={busy !== null || r.status === "queued"} onClick={() => void print(r)} data-testid="report-print">Print</button>
                   <button disabled={busy !== null} onClick={() => void run(`test-${r.id}`, { action: "sendTest", reportId: r.id }, (d) => `Test copy sent to ${d.to}.`)} data-testid="report-test">Send test to me</button>
-                  {r.report_type === "builder_site_audit" && (r.status === "built" || r.status === "failed" || stuck) && (
+                  <button disabled={busy !== null || r.status === "queued"} onClick={() => { setShareFor(shareFor === r.id ? null : r.id); setMessage(null); }} data-testid="report-share" aria-expanded={shareFor === r.id}>Email colleagues</button>
+                  {(r.status === "built" || r.status === "failed" || stuck) && (
                     <button className="primary" disabled={busy !== null || !canSendToBuilder} onClick={() => setConfirmSend(r.id)} data-testid="report-send">{r.status === "failed" || stuck ? "Retry send" : "Send to builder"}</button>
                   )}
                 </div>
-                {r.report_type === "builder_site_audit" && r.status !== "sent" && !canSendToBuilder && <p className="muted small">{dirty ? "Save the builder contact first." : "Add the builder's email above to enable sending."}</p>}
+                {shareFor === r.id && (
+                  <div className="panel" data-testid="share-panel">
+                    <label>PHC email addresses <small className="muted">(separate with commas or spaces; PHC addresses only, up to 10)</small>
+                      <input value={emails} inputMode="email" autoCapitalize="none" onChange={(e) => setEmails(e.target.value)} placeholder="name@company-address" data-testid="share-emails" />
+                    </label>
+                    <p className="muted small">Each person gets their own copy, marked internal. Sharing does not use up the builder email. It replaces the previously saved report of this kind.</p>
+                    <div className="btnrow">
+                      <button className="primary" disabled={busy !== null || emails.trim() === ""} onClick={() => void shareWith(r)} data-testid="share-send">{busy === `share-${r.id}` ? "Sending…" : "Send to colleagues"}</button>
+                      <button onClick={() => setShareFor(null)}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+                {r.status !== "sent" && !canSendToBuilder && <p className="muted small">{dirty ? "Save the builder contact first." : "Add the builder's email above to enable sending."}</p>}
                 {confirmSend === r.id && saved && (
                   <div className="panel" role="alertdialog" aria-label="Confirm send" data-testid="send-confirm">
-                    <p><strong>Send this report to {saved.name || "the builder"} ({saved.email})?</strong><br />It goes out immediately and can only be sent once. It replaces the previously saved report of this kind.</p>
+                    <p><strong>Send this {TYPE_LABEL[r.report_type].toLowerCase()} to {saved.name || "the builder"} ({saved.email})?</strong><br />It goes out immediately and can only be sent once. It replaces the previously saved report of this kind.</p>
                     <div className="btnrow">
                       <button className="primary" disabled={busy !== null} onClick={() => void run(`send-${r.id}`, { action: "send", reportId: r.id }, (d) => `Sent to ${d.to}.`)} data-testid="send-confirm-yes">{busy === `send-${r.id}` ? "Sending…" : "Yes, send"}</button>
                       <button onClick={() => setConfirmSend(null)} data-testid="send-confirm-no">Cancel</button>

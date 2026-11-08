@@ -20,7 +20,7 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     await waitFor(async () => (await fetch(`${MOCK}/__state`)).ok, "mock server");
     await control({ resetIssues: true, resetChecks: true, role: "project_manager" });
     process.env.VITE_SUPABASE_URL = MOCK; process.env.VITE_SUPABASE_PUBLISHABLE_KEY = "test-key";
-    process.env.REPORT_FROM = "Test Reports <reports@example.test>"; process.env.REPORT_TRANSPORT = "fake"; delete process.env.VERCEL_ENV;
+    process.env.REPORT_FROM = "Test Reports <reports@example.test>"; process.env.PHC_EMAIL_DOMAIN = "phc.example"; process.env.REPORT_TRANSPORT = "fake"; delete process.env.VERCEL_ENV;
     const ROOT = process.env.API_ROOT || path.resolve(cwd, "../..");           // API_ROOT: a folder holding ONLY the files Vercel would ship (see docs/ops/vercel-function-check.md)
     process.chdir(ROOT);                                                      // like Vercel: the function runs from the project root, assets shipped with it
     const { default: handler } = await import(path.join(ROOT, "api/reports.mjs"));
@@ -30,23 +30,23 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     };
     const rest = async (p) => (await fetch(`${MOCK}${p}`, { headers: { authorization: "Bearer test-token" } })).json();
 
-    check((await call({ action: "build", projectId: P, type: "room_status" }, null)).status === 401, "no token is refused (401)");
-    check((await call({ action: "build", projectId: P, type: "room_status" }, "wrong")).status === 401, "a wrong token is refused (401)");
+    check((await call({ action: "build", projectId: P, options: { preset: "room_status" } }, null)).status === 401, "no token is refused (401)");
+    check((await call({ action: "build", projectId: P, options: { preset: "room_status" } }, "wrong")).status === 401, "a wrong token is refused (401)");
 
     await control({ role: "installer" });
-    const denied = await call({ action: "build", projectId: P, type: "room_status" });
+    const denied = await call({ action: "build", projectId: P, options: { preset: "room_status" } });
     check(denied.status === 403, `an installer is refused (${denied.status} ${denied.json?.error})`);
     await control({ role: "project_manager" });
 
-    const b = await call({ action: "build", projectId: P, type: "builder_site_audit" });
+    const b = await call({ action: "build", projectId: P, options: { preset: "builder_site_audit" } });
     check(b.status === 200 && b.json.bytes > 1000 && b.json.identified === 0, `builds a site audit through the real adapters (${b.status}, ${b.json.bytes} bytes)`);
-    const s = await call({ action: "build", projectId: P, type: "room_status" });
+    const s = await call({ action: "build", projectId: P, options: { preset: "room_status" } });
     check(s.status === 200, "builds a room status PDF");
     const list = await rest("/rest/v1/reports");
     check(list.length === 2 && list.every((r) => r.status === "built" && r.storage_path === `${P}/${r.id}.pdf`), "both reports are recorded as built under <project>/<report>.pdf");
 
     const files = async () => (await (await fetch(`${MOCK}/__sent`)).json()).files.length;
-    const b2 = await call({ action: "build", projectId: P, type: "builder_site_audit" });
+    const b2 = await call({ action: "build", projectId: P, options: { preset: "builder_site_audit" } });
     const list2 = await rest("/rest/v1/reports");
     check(b2.status === 200 && list2.length === 2 && !list2.some((r) => r.id === b.json.reportId) && await files() === 2, "a rebuild replaces the previous preview of that type: its row AND its file are removed (real storage adapter)");
     const pr = await call({ action: "print", reportId: s.json.reportId });
@@ -69,6 +69,14 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
 
     const prod = await (async () => { process.env.VERCEL_ENV = "production"; const r = await call({ action: "sendTest", reportId: s.json.reportId }); delete process.env.VERCEL_ENV; return r; })();
     check(prod.status === 500 && !JSON.stringify(prod.json).includes("test-token"), "the fake transport is refused in production, and the error does not leak the token");
+    const svc = await call({ action: "build", projectId: P, options: { preset: "service", issueStatus: "both", photos: "none" } });
+    check(svc.status === 200 && (await rest("/rest/v1/reports")).some((r) => r.report_type === "service" && r.options && r.options.photos === "none"), "builds a service report with its options through the real adapters");
+    const shareBad = await call({ action: "share", reportId: svc.json.reportId, recipients: ["builder@example.test"] });
+    check(shareBad.status === 422 && shareBad.json.error === "recipient_not_phc", "sharing with a non-PHC address is refused");
+    const shareOk = await call({ action: "share", reportId: svc.json.reportId, recipients: ["a@phc.example", "b@phc.example"] });
+    check(shareOk.status === 200 && shareOk.json.to.length === 2 && (await rest("/rest/v1/reports")).find((r) => r.id === svc.json.reportId).shared_to.length === 2, "sharing with colleagues works and is recorded");
+    const noOpts = await call({ action: "build", projectId: P, options: { preset: "custom", kinds: [], checklist: "none" } });
+    check(noOpts.status === 422 && noOpts.json.error === "nothing_selected", "a report with nothing chosen is refused with the reason");
     const bad = await call({ action: "send", reportId: "not-a-uuid" });
     check(bad.status === 400, "a malformed report id is refused (400)");
   } finally { killAll(); }

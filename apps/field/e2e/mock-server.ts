@@ -116,7 +116,7 @@ function mockReportDb(): ReportDb {
     async listRoomChecks() { return [...checks.entries()].map(([k, v]) => { const [room_id, item_key] = k.split(":"); return { room_id: room_id!, item_key: item_key!, state: v.state as "done" | "not_done" | "na", note: v.note, checked_by: USER, checked_at: v.checked_at }; }); },
     async createReport(a) {
       deny();
-      const r: ReportRow = { id: a.id, project_id: a.projectId, report_type: a.type, storage_path: a.path, file_size: a.bytes, built_at: new Date().toISOString(), status: "built", recipient_name: null, recipient_email: null, queued_at: null, sent_at: null, printed_at: null, message_id: null, error: null };
+      const r: ReportRow = { id: a.id, project_id: a.projectId, report_type: a.type, storage_path: a.path, file_size: a.bytes, options: a.options ?? null, built_at: new Date().toISOString(), status: "built", recipient_name: null, recipient_email: null, queued_at: null, sent_at: null, printed_at: null, shared_at: null, shared_to: null, message_id: null, error: null };
       reports.set(r.id, r); plog("report_built", { id: r.id, type: a.type, bytes: a.bytes }); return { ...r };
     },
     async getReport(id) { deny(); const r = reports.get(id); return r ? { ...r } : null; },
@@ -127,11 +127,12 @@ function mockReportDb(): ReportDb {
       Object.assign(r, { status: "queued", queued_at: new Date().toISOString(), recipient_name: name, recipient_email: email, error: null }); return { ...r };
     },
     async markReportPrinted(id) { deny(); const r = reports.get(id); if (!r) throw new ReportError("forbidden", "forbidden"); r.printed_at = new Date().toISOString(); plog("report_printed", { id }); },
+    async markReportShared(id, emails) { deny(); const r = reports.get(id); if (!r) throw new ReportError("forbidden", "forbidden"); r.shared_at = new Date().toISOString(); r.shared_to = emails; plog("report_shared", { id, n: emails.length }); },
     async listReportPaths(projectId) { return [...reports.values()].filter((r) => r.project_id === projectId).map((r) => r.storage_path); },
     async pruneReports(projectId, type, keepId) {                       // same rule as prune_reports in migration 1800
       deny();
-      const saved = (r: ReportRow) => r.sent_at !== null || r.printed_at !== null;
-      const stamp = (r: ReportRow) => Math.max(r.sent_at ? Date.parse(r.sent_at) : -Infinity, r.printed_at ? Date.parse(r.printed_at) : -Infinity);
+      const saved = (r: ReportRow) => r.sent_at !== null || r.printed_at !== null || r.shared_at !== null;
+      const stamp = (r: ReportRow) => Math.max(r.sent_at ? Date.parse(r.sent_at) : -Infinity, r.printed_at ? Date.parse(r.printed_at) : -Infinity, r.shared_at ? Date.parse(r.shared_at) : -Infinity);
       const newest = [...reports.values()].filter((r) => r.project_id === projectId && r.report_type === type && saved(r)).sort((a, b) => stamp(b) - stamp(a))[0];
       const now = Date.now(); const paths: string[] = [];
       for (const r of [...reports.values()]) {
@@ -211,13 +212,14 @@ http.createServer((req, res) => {
       const { prefix } = JSON.parse(body || "{}") as { prefix: string };
       return send(res, 200, [...objectBytes.keys()].filter((k) => k.startsWith(`${prefix}/`) && !k.slice(prefix.length + 1).includes("/") && !k.includes("/issues/")).map((k) => ({ id: "x", name: k.slice(prefix.length + 1), created_at: "2020-01-01T00:00:00Z" })));
     }
-    const rpc = /^\/rest\/v1\/rpc\/(create_report|queue_report_send|mark_report_sent|mark_report_failed|mark_report_printed|prune_reports)$/.exec(url.pathname);
+    const rpc = /^\/rest\/v1\/rpc\/(create_report|queue_report_send|mark_report_sent|mark_report_failed|mark_report_printed|mark_report_shared|prune_reports)$/.exec(url.pathname);
     if (rpc && req.method === "POST") {                                   // the real functions' names and parameters (migration 1700)
       const b = JSON.parse(body || "{}") as Record<string, never>; const db = mockReportDb();
       try {
-        if (rpc[1] === "create_report") return send(res, 200, await db.createReport({ id: b.p_id, projectId: b.p_project, type: b.p_type, path: b.p_path, bytes: b.p_bytes }));
+        if (rpc[1] === "create_report") return send(res, 200, await db.createReport({ id: b.p_id, projectId: b.p_project, type: b.p_type, path: b.p_path, bytes: b.p_bytes, options: (b as { p_options?: never }).p_options }));
         if (rpc[1] === "queue_report_send") return send(res, 200, await db.queueReportSend(b.p_report_id, b.p_recipient_name ?? null, b.p_recipient_email));
         if (rpc[1] === "mark_report_sent") { await db.markReportSent(b.p_report_id, b.p_message_id); return send(res, 200, null); }
+        if (rpc[1] === "mark_report_shared") { await db.markReportShared(b.p_report_id, (b as unknown as { p_emails: string[] }).p_emails); return send(res, 200, null); }
         if (rpc[1] === "mark_report_printed") { await db.markReportPrinted(b.p_report_id); return send(res, 200, null); }
         if (rpc[1] === "prune_reports") return send(res, 200, await db.pruneReports(b.p_project, b.p_type, b.p_keep));
         await db.markReportFailed(b.p_report_id, b.p_error); return send(res, 200, null);
@@ -234,7 +236,7 @@ http.createServer((req, res) => {
           sentMail.push({ to: m.to, from: m.from, subject: m.subject, filename: m.attachment.filename, isPdf: m.attachment.content.subarray(0, 5).toString() === "%PDF-" });
           return r;
         } }),
-        env: { REPORT_FROM: "Test Reports <reports@example.test>", REPORT_TIMEZONE: "America/Phoenix" },
+        env: { REPORT_FROM: "Test Reports <reports@example.test>", REPORT_TIMEZONE: "America/Phoenix", PHC_EMAIL_DOMAIN: "phc.example" },
       });
       return send(res, out.status, out.json);
     }

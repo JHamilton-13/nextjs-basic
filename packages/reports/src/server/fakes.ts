@@ -18,9 +18,9 @@ export class FakeDb implements ReportDb {
   async listIssuePhotos() { return this.photos; }
   async listProfiles(ids: string[]) { return this.profiles.filter((p) => ids.includes(p.id)); }
   async listRoomChecks() { return this.checks; }
-  async createReport(a: { id: string; projectId: string; type: ReportRow["report_type"]; path: string; bytes: number }) {
+  async createReport(a: { id: string; projectId: string; type: ReportRow["report_type"]; path: string; bytes: number; options?: unknown }) {
     if (this.failCreate) throw new ReportError("db_error", "insert failed");
-    const r: ReportRow = { id: a.id, project_id: a.projectId, report_type: a.type, storage_path: a.path, file_size: a.bytes, built_at: this.clock().toISOString(), status: "built", recipient_name: null, recipient_email: null, queued_at: null, sent_at: null, printed_at: null, message_id: null, error: null };
+    const r: ReportRow = { id: a.id, project_id: a.projectId, report_type: a.type, storage_path: a.path, file_size: a.bytes, options: (a.options as ReportRow["options"]) ?? null, built_at: this.clock().toISOString(), status: "built", recipient_name: null, recipient_email: null, queued_at: null, sent_at: null, printed_at: null, shared_at: null, shared_to: null, message_id: null, error: null };
     this.reports.set(r.id, r);
     return { ...r };
   }
@@ -35,11 +35,12 @@ export class FakeDb implements ReportDb {
   }
   async markReportSent(id: string, messageId: string) { const r = this.reports.get(id)!; if (r.status !== "queued") throw new ReportError("report_not_queued", "report_not_queued"); Object.assign(r, { status: "sent", sent_at: this.clock().toISOString(), message_id: messageId }); }
   async markReportPrinted(id: string) { const r = this.reports.get(id); if (!r) throw new ReportError("forbidden", "forbidden"); r.printed_at = this.clock().toISOString(); }
+  async markReportShared(id: string, emails: string[]) { const r = this.reports.get(id); if (!r) throw new ReportError("forbidden", "forbidden"); r.shared_at = this.clock().toISOString(); r.shared_to = emails; }
   async listReportPaths(projectId: string) { return [...this.reports.values()].filter((r) => r.project_id === projectId).map((r) => r.storage_path); }
   /** Same rule as prune_reports in migration 1800. */
   async pruneReports(projectId: string, type: ReportRow["report_type"], keepId: string) {
-    const saved = (r: ReportRow) => r.sent_at !== null || r.printed_at !== null;
-    const stamp = (r: ReportRow) => Math.max(r.sent_at ? Date.parse(r.sent_at) : -Infinity, r.printed_at ? Date.parse(r.printed_at) : -Infinity);
+    const saved = (r: ReportRow) => r.sent_at !== null || r.printed_at !== null || r.shared_at !== null;
+    const stamp = (r: ReportRow) => Math.max(r.sent_at ? Date.parse(r.sent_at) : -Infinity, r.printed_at ? Date.parse(r.printed_at) : -Infinity, r.shared_at ? Date.parse(r.shared_at) : -Infinity);
     const newest = [...this.reports.values()].filter((r) => r.project_id === projectId && r.report_type === type && saved(r)).sort((a, b) => stamp(b) - stamp(a))[0];
     const now = this.clock().getTime(); const paths: string[] = [];
     for (const r of [...this.reports.values()]) {

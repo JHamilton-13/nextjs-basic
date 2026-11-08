@@ -11,6 +11,7 @@ Nothing here goes in the repo. The values go in **Vercel > Project `nextjs-basic
 | `GMAIL_CLIENT_ID` | OAuth client id from step 2 | Yes |
 | `GMAIL_CLIENT_SECRET` | OAuth client secret from step 2 | Yes |
 | `GMAIL_REFRESH_TOKEN` | Refresh token from step 3 | Yes |
+| `PHC_EMAIL_DOMAIN` | Your company email domain, for example `company-domain.example` (no @). Only addresses on this domain can be emailed or shared with as colleagues. | Yes, for sharing |
 | `REPORT_TIMEZONE` | e.g. `America/Phoenix` (that is also the default) | No |
 | `REPORT_TRANSPORT` | leave unset (Gmail). `fake` is for tests and is refused in production | No |
 

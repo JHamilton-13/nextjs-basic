@@ -2,7 +2,7 @@
 // The one server function for reports: build, send and send-a-test. It acts as the signed-in manager (their own Supabase session, so
 // row-level security applies) and never holds a service key. All logic lives in packages/reports (tested); this file only wires in the
 // real Supabase and Gmail. Settings (Vercel, never in the repo): REPORT_FROM, REPORT_TIMEZONE, REPORT_TRANSPORT, GMAIL_CLIENT_ID,
-// GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN. The Supabase address and publishable key are read from the same settings the app build uses.
+// GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, PHC_EMAIL_DOMAIN (the company email domain colleagues must be on). The Supabase address and publishable key are read from the same settings the app build uses.
 import { createClient } from "@supabase/supabase-js";
 import { getTransport } from "./server/transport";
 import { handleReportsRequest } from "./server/handler";
@@ -29,7 +29,7 @@ export default async function handler(req: Req, res: Res): Promise<void> {
       return { db: supabaseDb(sb), storage: supabaseStorage(sb) };
     },
     transport: () => getTransport(env),
-    env: { ...(env.REPORT_FROM ? { REPORT_FROM: env.REPORT_FROM } : {}), ...(env.REPORT_TIMEZONE ? { REPORT_TIMEZONE: env.REPORT_TIMEZONE } : {}) },
+    env: { ...(env.REPORT_FROM ? { REPORT_FROM: env.REPORT_FROM } : {}), ...(env.REPORT_TIMEZONE ? { REPORT_TIMEZONE: env.REPORT_TIMEZONE } : {}), ...(env.PHC_EMAIL_DOMAIN ? { PHC_EMAIL_DOMAIN: env.PHC_EMAIL_DOMAIN } : {}) },
   });
   res.status(out.status).json(out.json);
 }

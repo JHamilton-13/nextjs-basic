@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { PRESET_OPTIONS } from "@phc/domain";
 import { supabaseDb, supabaseStorage } from "./supabaseAdapters";
 
 /** A stand-in client that records the calls (names and parameters must match migration 1700 exactly). */
@@ -27,8 +28,8 @@ function stub(responses: Record<string, { data?: unknown; error?: { message: str
 describe("supabaseDb sends the exact function names and parameters the migration defines", () => {
   it("create_report", async () => {
     const { sb, calls } = stub();
-    await supabaseDb(sb).createReport({ id: "i", projectId: "p", type: "room_status", path: "p/i.pdf", bytes: 5 });
-    expect(calls).toEqual([{ fn: "rpc.create_report", args: { p_id: "i", p_project: "p", p_type: "room_status", p_path: "p/i.pdf", p_bytes: 5 } }]);
+    await supabaseDb(sb).createReport({ id: "i", projectId: "p", type: "room_status", path: "p/i.pdf", bytes: 5, options: PRESET_OPTIONS.room_status });
+    expect(calls).toEqual([{ fn: "rpc.create_report", args: { p_id: "i", p_project: "p", p_type: "room_status", p_path: "p/i.pdf", p_bytes: 5, p_options: PRESET_OPTIONS.room_status } }]);
   });
   it("queue_report_send, mark_report_sent, mark_report_failed", async () => {
     const { sb, calls } = stub();
@@ -50,13 +51,18 @@ describe("supabaseDb sends the exact function names and parameters the migration
       { fn: "rpc.prune_reports", args: { p_project: "P", p_type: "room_status", p_keep: "k" } },
     ]);
   });
+  it("mark_report_shared uses the migration's name and parameters", async () => {
+    const { sb, calls } = stub();
+    await supabaseDb(sb).markReportShared("r", ["a@phc.example", "b@phc.example"]);
+    expect(calls).toEqual([{ fn: "rpc.mark_report_shared", args: { p_report_id: "r", p_emails: ["a@phc.example", "b@phc.example"] } }]);
+  });
   it("turns the database's refusal words into error codes", async () => {
     for (const code of ["report_already_queued", "report_already_sent", "report_not_queued", "invalid_recipient", "forbidden"]) {
       const { sb } = stub({ "rpc.queue_report_send": { data: null, error: { message: `${code}` } } });
       await expect(supabaseDb(sb).queueReportSend("r", null, "a@b.test")).rejects.toMatchObject({ code });
     }
     const { sb } = stub({ "rpc.create_report": { data: null, error: { message: "boom" } } });
-    await expect(supabaseDb(sb).createReport({ id: "i", projectId: "p", type: "room_status", path: "x", bytes: 1 })).rejects.toMatchObject({ code: "db_error" });
+    await expect(supabaseDb(sb).createReport({ id: "i", projectId: "p", type: "room_status", path: "x", bytes: 1, options: PRESET_OPTIONS.room_status })).rejects.toMatchObject({ code: "db_error" });
   });
   it("reads only this job's rows", async () => {
     const { sb, calls } = stub();
