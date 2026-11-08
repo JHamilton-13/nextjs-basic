@@ -28,6 +28,18 @@
 - Tests use only fake data and the trial project. No real builder addresses.
 - Never mark a task done until built and tested; record results in `docs/testing/` and `docs/MILESTONES.md`.
 
+## Amendments (owner-approved 2026-11-08; these override any conflicting text below)
+
+1. **No new app, no new Vercel or Supabase project.** `apps/web` stays the untouched starter. Plan Tasks 5, 6 and 7 are re-scoped: the manager screens (builder contact, trade list, room status, report build/preview/send) live inside `apps/field`, shown to manager roles only; report building and sending run in one server function in the existing Vercel project (`api/` folder), acting as the signed-in manager (their own Supabase session, row-level security, never a service key). `@supabase/ssr`, Next.js routes and the `apps/web` e2e are dropped. Vercel limits a function response to 4.5 MB, so the PDF is stored in Supabase and previewed through a short-lived signed link; sending attaches it on the server.
+2. **Migration split.** 1600 (`20261108001600_issue_trades_void_builder.sql`): trades, `room_issues.trade_id`, void, who may change an issue, the Damaged-part photo rule, builder contact on `projects`. Reports tables, bucket and send functions come in a LATER migration, written when the send path is built.
+3. **Email outbox not used for reports.** `public.email_outbox` requires a notification to a signed-in user and has no attachment field. `reports.status` (built / queued / sent / failed) with `queue_report_send` is the queue.
+4. **Photos in the PDF:** the marked-up copy when one exists, otherwise the original.
+5. **Void:** by the person who raised the issue or any manager. The same rule applies to edit, complete and reopen. Void is allowed on an open or a completed issue; a voided issue cannot be changed again.
+6. **Damaged part:** the form blocks saving without a photo; the database blocks completing (not creating) until at least one original photo is registered (`photo_required`).
+7. **Sending:** a server function in the existing Vercel project, Gmail credentials only in Vercel settings.
+
+**Real names (replace the plan's):** table `public.room_issues` (not `issues`); `room_issues.trade_id`; rejection is `{status:'rejected', message:'trade_required'}` (no separate code field); manager helper `app.has_role(project, app.override_roles())` (no new helper); site address is the existing `projects.address` (only `prepared_for_name` and `prepared_for_email` are added); migrations are named `2026110800NNNN_name.sql`; DB tests are `NN_name.sql` (next free number); domain tests live in `packages/domain/test/`; the field app has `src/ui` and `src/lib` (no `features/`) and its unit tests run in plain Node (the picker's logic is unit-tested, its screen by the emulated-phone suite); initials for "Raised by" come from `profiles.full_name`, falling back to the email; issue photos are `issue_photos` / bucket `issue-photos`; the audit log writer is the trigger `app.log_change('<key columns>')`.
+
 ## Prerequisite (not in this plan)
 
 The installer Add Issue screens are not built yet (handoff section 6A is still open). This plan adds the category/kind/trade picker as a standalone, tested component (Task 8) and seeds test issues in SQL. Wiring the picker into Add Issue happens when that screen is built.
