@@ -133,7 +133,7 @@ export function AnnotateModal({ ctx, source, original, initial, onClose }: { ctx
         <strong>Mark up photo</strong>
         <button className="primary" disabled={!ready || saving || shapes.length === 0} onClick={save} data-testid="save-annotation">{saving ? "Saving…" : "Save copy"}</button>
       </div>
-      <div className="canvas-wrap" ref={wrap}><canvas ref={canvas} className="annot" data-testid="annotate-canvas" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} /></div>
+      <div className="canvas-wrap" ref={wrap}>{tool === "erase" && <p className="tool-hint" data-testid="erase-hint">Eraser: drag over a mark to remove it. Undo brings it back.</p>}<canvas ref={canvas} className="annot" data-testid="annotate-canvas" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} /></div>
       {pending && (
         <div className="textrow">
           <input autoFocus placeholder="Type a short note" maxLength={200} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addText(); }} data-testid="text-input" />
@@ -143,7 +143,7 @@ export function AnnotateModal({ ctx, source, original, initial, onClose }: { ctx
       <div className="tools" data-testid="tools" data-marks={shapes.length}>
         <div className="toolrow">
           {(["pen", "highlight", "text", "erase"] as Tool[]).map((t) => (
-            <button key={t} className={tool === t ? "on" : ""} onClick={() => { setTool(t); setPending(null); }} data-testid={`tool-${t}`}>{t === "pen" ? "Pen" : t === "highlight" ? "Highlight" : t === "text" ? "Text" : "Erase"}</button>
+            <button key={t} className={tool === t ? "on" : ""} onClick={() => { setTool(t); setPending(null); }} data-testid={`tool-${t}`} aria-label={t === "erase" ? "Eraser" : t === "highlight" ? "Highlighter" : undefined}>{t === "pen" ? "Pen" : t === "highlight" ? "Marker" : t === "text" ? "Text" : "⌫ Eraser"}</button>
           ))}
           <button disabled={past.length === 0} onClick={undo} data-testid="undo">Undo</button>
         </div>

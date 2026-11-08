@@ -200,8 +200,11 @@ async function runDevice(browser, name) {
   const bx = await cv.boundingBox();
   await touchStroke(cdpI, [[bx.x + bx.width * 0.2, bx.y + bx.height * 0.2], [bx.x + bx.width * 0.5, bx.y + bx.height * 0.4], [bx.x + bx.width * 0.7, bx.y + bx.height * 0.7]]);
   await page.getByTestId("save-annotation").tap();
-  await waitFor(async () => (await dmg2.getByTestId("photo-thumb").count()) === 2, "marked-up copy on the issue");
-  check((await dmg2.locator('[data-annotated="yes"]').count()) === 1, `${tag}: a marked-up copy is saved next to the original photo on the issue`);
+  await waitFor(async () => (await dmg2.getByTestId("show-archived").count()) === 1, "marked-up copy on the issue");
+  check((await dmg2.locator('[data-annotated="yes"]').count()) === 1 && (await dmg2.getByTestId("photo-thumb").count()) === 1, `${tag}: the marked-up copy is shown and the original is archived (kept, hidden)`);
+  await dmg2.getByTestId("show-archived").tap();
+  check((await dmg2.getByTestId("photo-thumb").count()) === 2 && (await dmg2.getByTestId("photo-archived").count()) === 1 && (await dmg2.getByTestId("photo-archived").locator("..").getByTestId("annotate-btn").count()) === 0, `${tag}: 'Show archived original' lists it, labelled, with no Mark up button`);
+  await dmg2.getByTestId("show-archived").tap();
   await syncedNow();
   await waitFor(async () => (await serverLog()).length > 0 && (await (await page.request.get(`${MOCK}/__photos`)).json()).objects && true, "photos listed");
   check(true, `${tag}: the marked-up copy synced`);
@@ -311,7 +314,7 @@ async function runDevice(browser, name) {
   await page.getByTestId("tool-pen").click();
   await shot("7-annotated");
   await page.getByTestId("save-annotation").click();
-  await waitFor(async () => (await outlets.getByTestId("photo-thumb").count()) === 2, "marked-up copy");
+  await waitFor(async () => (await outlets.getByTestId("show-archived").count()) === 1, "marked-up copy");
   check(true, `${tag}: pen + highlighter + text saved as a marked-up copy from touch input`);
   const marks = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = () => resolve(q.result.filter((p) => p.auditId && p.annotatedFrom).map((p) => p.annotations.map((a) => a.type + ":" + (a.points ? a.points.length : 0)))); }; }));
   check(marks.length === 1 && marks[0].length === 3 && marks[0][0].startsWith("pen:") && Number(marks[0][0].split(":")[1]) >= 4, `${tag}: the finger path was kept as an editable stroke (${marks[0].join(", ")})`);

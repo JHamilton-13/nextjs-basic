@@ -2,7 +2,11 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
+// Shown on the Sync queue screen so anyone can tell which build their phone is running (a phone can keep an older copy until the app is closed and reopened).
+const BUILD_ID = `${(process.env.VERCEL_GIT_COMMIT_SHA ?? "local").slice(0, 7)} · ${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`;
+
 export default defineConfig({
+  define: { __BUILD_ID__: JSON.stringify(BUILD_ID) },
   plugins: [
     react(),
     VitePWA({

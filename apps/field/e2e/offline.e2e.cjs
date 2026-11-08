@@ -242,8 +242,11 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     await page.getByTestId("text-add").click();
     check(await page.getByTestId("undo").isEnabled() && await page.getByTestId("save-annotation").isEnabled(), "pen, highlighter and text marks drawn; save enabled");
     await page.getByTestId("save-annotation").click();
-    await waitFor(async () => (await out.getByTestId("photo-thumb").count()) === 3, "annotated copy appears");
-    check((await out.locator('[data-annotated="yes"]').count()) === 1 && (await out.getByTestId("photo-kind").innerText()) === "Marked up", "offline: a marked-up COPY is saved next to the originals");
+    await waitFor(async () => (await out.getByTestId("show-archived").count()) === 1, "annotated copy appears and its original is archived");
+    check((await out.locator('[data-annotated="yes"]').count()) === 1 && (await out.getByTestId("photo-kind").innerText()) === "Marked up" && (await out.getByTestId("photo-thumb").count()) === 2, "offline: a marked-up COPY is saved and its original is archived (hidden, not deleted)");
+    await out.getByTestId("show-archived").click();
+    check((await out.getByTestId("photo-thumb").count()) === 3 && (await out.getByTestId("photo-archived").innerText()).includes("archived"), "offline: 'Show archived originals' brings the original back, marked as archived");
+    await out.getByTestId("show-archived").click();
 
     await out.getByTestId("edit-marks").click();
     await waitFor(async () => Number(await page.getByTestId("tools").getAttribute("data-marks")) > 0, "editor reopened with the saved marks");

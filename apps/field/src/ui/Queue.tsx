@@ -35,6 +35,7 @@ export function Queue({ ctx }: { ctx: AppCtx }) {
           </>
         ) : <p className="muted">Checking…</p>}
       </section>
+      <p className="muted small" data-testid="build-id">App version {__BUILD_ID__}. If something looks old, close the app completely and open it again.</p>
       <p className="muted">Everything you do is saved on this device first, then sent in order. An item only says “synced” after the server confirms it.</p>
       <button className="primary" disabled={ctx.syncing || !ctx.hasSession} onClick={() => void ctx.sync(true)} data-testid="sync-now">{ctx.syncing ? "Syncing…" : "Sync now"}</button>
       {!ctx.hasSession && <p className="chip warn">Sign in again (needs a connection) to send your changes.</p>}

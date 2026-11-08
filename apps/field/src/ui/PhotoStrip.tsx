@@ -26,7 +26,12 @@ function Preview({ ctx, p }: { ctx: AppCtx; p: LocalPhoto }) {
 export function PhotoStrip({ ctx, scope, photos, disabled }: { ctx: AppCtx; scope: PhotoScope; photos: LocalPhoto[]; disabled: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [editing, setEditing] = useState<{ original: LocalPhoto; source: Blob; initial: Shape[] } | null>(null);
+  // A photo that has a marked-up copy is archived: kept (never deleted or changed) but not shown in the list unless asked.
+  const archivedIds = new Set(photos.filter((p) => p.annotatedFrom).map((p) => p.annotatedFrom as string));
+  const archivedCount = photos.filter((p) => archivedIds.has(p.id)).length;
+  const visible = photos.filter((p) => showArchived || !archivedIds.has(p.id));
   const bucket = scope.kind === "issue" ? "issue-photos" : "audit-photos";
   const key = scope.kind === "issue" ? `issue-${scope.issueId}` : scope.itemKey ?? "room";
 
@@ -58,15 +63,21 @@ export function PhotoStrip({ ctx, scope, photos, disabled }: { ctx: AppCtx; scop
   return (
     <div className="photos">
       <div className="thumbs">
-        {photos.map((p) => (
-          <figure key={p.id} data-testid="photo-thumb" data-annotated={p.annotatedFrom ? "yes" : "no"}>
+        {visible.map((p) => (
+          <figure key={p.id} data-testid="photo-thumb" data-annotated={p.annotatedFrom ? "yes" : "no"} data-archived={archivedIds.has(p.id) ? "yes" : "no"}>
             <Preview ctx={ctx} p={p} />
             <figcaption className={p.confirmed ? "ok" : "wait"} data-testid="photo-status">{p.confirmed ? "Uploaded" : "On this device"}</figcaption>
             {p.annotatedFrom && <figcaption className="muted" data-testid="photo-kind">Marked up</figcaption>}
-            {!disabled && !!p.thumb && <button className="small" onClick={() => void openEditor(p)} data-testid={p.annotatedFrom ? "edit-marks" : "annotate-btn"}>{p.annotatedFrom ? "Edit marks" : "Mark up"}</button>}
+            {archivedIds.has(p.id) && <figcaption className="muted" data-testid="photo-archived">Original (archived)</figcaption>}
+            {!disabled && !!p.thumb && !archivedIds.has(p.id) && <button className="small" onClick={() => void openEditor(p)} data-testid={p.annotatedFrom ? "edit-marks" : "annotate-btn"}>{p.annotatedFrom ? "Edit marks" : "Mark up"}</button>}
           </figure>
         ))}
       </div>
+      {archivedCount > 0 && (
+        <button className="link small" onClick={() => setShowArchived((s) => !s)} data-testid="show-archived" aria-pressed={showArchived}>
+          {showArchived ? "Hide archived originals" : `Show ${archivedCount} archived original${archivedCount === 1 ? "" : "s"}`}
+        </button>
+      )}
       {!disabled && scope.kind === "audit" && (
         <label className="filebtn">
           {busy ? "Saving photo…" : "Add photo"}
