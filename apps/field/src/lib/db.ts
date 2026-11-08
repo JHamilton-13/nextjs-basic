@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { Identity, LocalAudit, LocalItem, LocalPhoto, OutboxRecord, ProjectRow, RoomRow, TemplateRow } from "./types";
+import type { Identity, LocalAudit, LocalItem, LocalPhoto, LocalRoomCheck, OutboxRecord, ProjectRow, RoomRow, TemplateRow } from "./types";
 
 interface PhcDB extends DBSchema {
   meta: { key: string; value: unknown };
@@ -9,6 +9,7 @@ interface PhcDB extends DBSchema {
   audits: { key: string; value: LocalAudit; indexes: { by_audit_id: string } };
   items: { key: string; value: LocalItem; indexes: { by_audit: string } };
   photos: { key: string; value: LocalPhoto; indexes: { by_audit: string } };
+  room_checks: { key: string; value: LocalRoomCheck; indexes: { by_room: string } };
   outbox: { key: number; value: OutboxRecord; indexes: { by_audit: string } };
 }
 
@@ -16,7 +17,7 @@ export type Db = IDBPDatabase<PhcDB>;
 
 /** Durable local store. Every write the user makes lands here (and in `outbox`) before any network call. */
 export function openPhcDb(name = "phc-field"): Promise<Db> {
-  return openDB<PhcDB>(name, 3, {
+  return openDB<PhcDB>(name, 4, {
     async upgrade(db, oldVersion, _newVersion, tx) {
       if (oldVersion < 1) {
         db.createObjectStore("meta");
@@ -43,6 +44,8 @@ export function openPhcDb(name = "phc-field"): Promise<Db> {
         for (const i of oldItems) items.put({ ...i, version: 1, auditKey: `${i.auditId}:1` });
         for (const p of oldPhotos) tx.objectStore("photos").put({ ...p, version: 1 });
       }
+      // v4: the per-room completion checklist.
+      if (oldVersion < 4) db.createObjectStore("room_checks", { keyPath: "key" }).createIndex("by_room", "roomId");
     }
   });
 }

@@ -3,6 +3,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
+import { ROOM_CHECK_ITEMS } from "../src/lib/roomChecks";
 import { applyOperation, auditState, emptyServerState, evaluate, type AuditItemOutcome, type ServerState } from "@phc/domain";
 
 const PORT = Number(process.env.MOCK_PORT ?? 54500);
@@ -18,6 +19,8 @@ const policy = (config as unknown as { policy: { nonCriticalIssueState: "manager
 const photos = new Map<string, { id: string; audit_id: string; version: number; item_key: string | null; storage_path: string; bytes: number; confirmed: boolean; annotated_from: string | null; annotations: unknown[] | null }>();
 // current result + who/when for every audit item row, per version (mirrors audit_items on the real server)
 const rows = new Map<string, { result: string; row_version: number; result_at: string | null; result_by: string | null; issue_at: string | null; issue_by: string | null }>();
+const R2 = "00000000-0000-4000-8000-000000000202";
+const checks = new Map<string, { state: string; note: string | null; checked_at: string; row_version: number }>();
 const LABEL = "Pat Installer";
 const objects = new Map<string, number>();
 const objectBytes = new Map<string, Buffer>();
@@ -65,7 +68,7 @@ http.createServer((req, res) => {
   req.on("end", () => {
     const raw = Buffer.concat(chunks); const body = raw.toString("utf8");
     if (url.pathname === "/__state") return send(res, 200, { log, versions: state.versions });
-    if (url.pathname === "/__control") { const c = JSON.parse(body || "{}"); if (c.dropNextResponses !== undefined) dropNext = c.dropNextResponses; if (c.down !== undefined) down = c.down; if (c.storageDown !== undefined) storageDown = c.storageDown; if (c.hang !== undefined) hang = c.hang; return send(res, 200, { dropNext, down, storageDown, hang }); }
+    if (url.pathname === "/__control") { const c = JSON.parse(body || "{}"); if (c.dropNextResponses !== undefined) dropNext = c.dropNextResponses; if (c.down !== undefined) down = c.down; if (c.storageDown !== undefined) storageDown = c.storageDown; if (c.hang !== undefined) hang = c.hang; if (c.resetChecks) { checks.clear(); state = { ...state, versions: Object.fromEntries(Object.entries(state.versions).filter(([k]) => !k.startsWith("room_check:"))) }; } return send(res, 200, { dropNext, down, storageDown, hang }); }
     if (url.pathname === "/__photos") return send(res, 200, { photos: [...photos.values()], objects: Object.fromEntries(objects) });
     if (url.pathname === "/__rows") return send(res, 200, Object.fromEntries(rows));
     if (down) { res.destroy(); return; }
@@ -75,7 +78,11 @@ http.createServer((req, res) => {
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(res, 401, { code: "PGRST301", message: "JWT expired" });
 
     if (url.pathname === "/rest/v1/projects") return send(res, 200, [{ id: P, name: "Demo Project (mock)", customer: "Mock Customer", address: "1 Test St" }]);
-    if (url.pathname === "/rest/v1/rooms") return send(res, 200, [{ id: R, project_id: P, name: "Kitchen", floor: null }]);
+    if (url.pathname === "/rest/v1/rooms") return send(res, 200, [
+      { id: R, project_id: P, name: "Kitchen", floor: null, details_source: "cockpit", details: { panelName: "Slab", woodSpecies: "Pre Finished", finishName: "Uniboard K15 Cannes Riviera Oak", edgebanding: "To Match", crownProfile: "Flat Crown", toeKickStyle: "TBD", sheen: "Pre Finished" } },
+      { id: R2, project_id: P, name: "Bath 1", floor: null, details_source: "masterfile", details: { panelName: "Slab", woodSpecies: "Pre Finished", finishName: "UNIBOARD - K16 Esterel Riviera Oak", edgebanding: "To Match" } },
+    ]);
+    if (url.pathname === "/rest/v1/room_checks") return send(res, 200, [...checks.entries()].map(([k, v]) => { const [room_id, item_key] = k.split(":"); return { room_id, item_key, project_id: P, state: v.state, note: v.note, checked_at: v.checked_at, row_version: v.row_version, by: { full_name: LABEL, email: "installer@phc.test" } }; }));
     if (url.pathname === "/rest/v1/audit_templates") return send(res, 200, [{ id: T, name: "EXAMPLE - Pre-Install Site Audit (sample)", version: 1, config }]);
     if (url.pathname === "/rest/v1/audit_items") {
       const auditId = (url.searchParams.get("audit_id") ?? "").replace("eq.", "");
@@ -139,7 +146,21 @@ http.createServer((req, res) => {
         if (!String(op.payload.reason ?? "").trim()) return reject("reason_required");
         if ((state.versions[`audit:${aId}:${prev}`] ?? 0) < 2) return reject("not_submitted"); // previous version must be submitted
       }
+      if (op.entity === "room_check") { // the same rules as app.op_room_check
+        const [roomId, itemKey] = op.entityId.split(":");
+        if (![R, R2].includes(roomId!)) return reject("room not found");
+        if (!ROOM_CHECK_ITEMS.some((i) => i.key === itemKey)) return reject("unknown checklist item");
+        const st = String(op.payload.state ?? ""); const note = String(op.payload.note ?? "").trim();
+        if (!["done", "not_done", "na", "clear"].includes(st)) return reject("state must be done, not_done, na or clear");
+        if (st === "not_done" && !note) return reject("a note is required when an item is not done");
+      }
       const r = applyOperation(state, op as never);
+      let outcome = r.outcome as { status: string; newVersion?: number };
+      if (r.outcome.status === "applied" && op.entity === "room_check") {
+        const cleared = op.payload.state === "clear";
+        if (cleared) { checks.delete(op.entityId); outcome = { status: "applied", newVersion: 0 }; }
+        else checks.set(op.entityId, { state: String(op.payload.state), note: op.payload.note ? String(op.payload.note) : null, checked_at: op.createdAt, row_version: r.outcome.newVersion });
+      }
       if (r.outcome.status === "applied") {
         if (op.entity === "audit_item") {
           const [aId, ver, iKey] = op.entityId.split(":"); const it = items.find((i) => i.key === iKey)!;
@@ -154,9 +175,10 @@ http.createServer((req, res) => {
         }
       }
       state = r.state;
+      if (op.entity === "room_check" && op.payload.state === "clear" && r.outcome.status === "applied") state = { ...state, versions: { ...state.versions, [`room_check:${op.entityId}`]: 0 } }; // the server deletes the row, so its version restarts at 0
       log.push({ opId: op.opId, entity: op.entity, entityId: op.entityId, baseVersion: op.baseVersion, outcome: r.outcome.status, ...(op.entity === "audit" ? { action: String(op.payload.action) } : {}) } as never);
       if (dropNext > 0) { dropNext--; res.destroy(); return; } // applied on the server, but the response is lost
-      return send(res, 200, r.outcome);
+      return send(res, 200, outcome);
     }
     send(res, 404, { message: `mock: no route ${req.method} ${url.pathname}` });
   });

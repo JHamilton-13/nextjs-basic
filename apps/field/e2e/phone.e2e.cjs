@@ -56,12 +56,72 @@ async function runDevice(browser, name) {
   const shot = (n) => page.screenshot({ path: path.join(SHOTS, `${name.replace(/\s+/g, "-")}-${n}.png`), scale: "css", fullPage: false });
   const tag = name;
 
+  await fetch(`${MOCK}/__control`, { method: "POST", body: JSON.stringify({ resetChecks: true }) });   // each device starts with an empty checklist on the mock server
   await page.goto(APP);
   await page.getByTestId("project-card").waitFor();
   check(await page.evaluate(() => !!document.querySelector('meta[name="viewport"][content*="viewport-fit=cover"]')), `${tag}: viewport meta allows full-screen (notch) layout`);
   const asked = await waitFor(async () => (await page.evaluate(() => window.__persistCalls)) > 0, "persistent storage request", 4000).then(() => true).catch(() => false);
   check(asked, `${tag}: the app asked the browser to protect its offline data from automatic clearing`);
   await audit(page, `${tag} project list`); await shot("1-projects");
+
+  // ---- rooms: details and the completion checklist ----
+  const R1 = "00000000-0000-4000-8000-000000000201";
+  check((await page.getByTestId("project-progress").innerText()).includes("2 rooms"), `${tag}: the project card shows how many rooms it has`);
+  await page.getByTestId("open-project").click();
+  await page.getByTestId("room-card").first().waitFor();
+  const kitchen = page.locator('[data-room="Kitchen"]');
+  const kText = await kitchen.innerText();
+  check(["Slab", "Pre Finished", "Uniboard K15 Cannes Riviera Oak", "To Match", "Panel Name", "Edgebanding"].every((t) => kText.includes(t)), `${tag}: the room card shows its details (panel, species, finish, edgebanding)`);
+  check(kText.includes("Details from Cockpit") && (await page.locator('[data-room="Bath 1"]').innerText()).includes("Details from the master file"), `${tag}: each room says where its details came from`);
+  await kitchen.locator("summary", { hasText: "More details" }).click();
+  check((await kitchen.locator("dd.tbd").count()) === 1 && (await kitchen.innerText()).includes("Flat Crown"), `${tag}: more details are listed and an unmade decision (TBD) is highlighted`);
+  check(!(await page.locator("body").innerText()).toLowerCase().includes("phc only"), `${tag}: no PHC-only field is shown to the installer`);
+  check((await kitchen.locator(".pill").count()) === 11, `${tag}: the checklist has 11 pills`);
+  await audit(page, `${tag} rooms`); await shot("1b-rooms");
+
+  const pill = (key) => kitchen.getByTestId(`pill-${key}`);
+  await pill("finished_toes").tap();
+  await waitFor(async () => (await pill("finished_toes").getAttribute("data-state")) === "done", "pill done");
+  check((await kitchen.getByTestId("room-progress").innerText()) === "1/11", `${tag}: one tap marks an item done and the room shows 1/11`);
+  await waitFor(async () => (await pill("finished_toes").getAttribute("data-pending")) === "no", "pill synced", 15000);
+  check(true, `${tag}: the tick reached the server (no longer waiting to sync)`);
+
+  await pill("finished_toes").tap();
+  await kitchen.getByTestId("pill-panel").waitFor();
+  check((await kitchen.getByTestId("pill-panel").innerText()).includes("Pat Installer"), `${tag}: tapping a marked item shows who marked it and when`);
+  await kitchen.getByTestId("set-notdone").tap();
+  await kitchen.getByTestId("save-notdone").tap();
+  check(await kitchen.getByRole("alert").isVisible(), `${tag}: Not done without a note is refused with a message`);
+  const NOTE = "Toe skins installed after wood floor installation. After 11/5";
+  await kitchen.getByTestId("notdone-note").fill(NOTE);
+  await audit(page, `${tag} not-done panel`); await shot("1c-notdone");
+  await kitchen.getByTestId("save-notdone").tap();
+  await waitFor(async () => (await pill("finished_toes").getAttribute("data-state")) === "not_done", "pill not_done");
+  check((await kitchen.getByTestId("notdone-line").innerText()).includes(NOTE), `${tag}: the not-done note is shown under the checklist`);
+  await pill("finished_toes").tap(); await kitchen.getByTestId("set-na").tap();
+  await waitFor(async () => (await pill("finished_toes").getAttribute("data-state")) === "na", "pill na");
+  await pill("finished_toes").tap(); await kitchen.getByTestId("set-clear").tap();
+  await waitFor(async () => (await pill("finished_toes").getAttribute("data-state")) === "none", "pill cleared");
+  await waitFor(async () => (await page.getByTestId("sync-status").innerText()) === "All synced", "all synced", 15000);
+  const srv = await (await page.request.get(`${MOCK}/__state`)).json();
+  check((srv.versions[`room_check:${R1}:finished_toes`] ?? 0) === 0 && srv.log.filter((l) => l.entity === "room_check" && l.outcome === "applied").length >= 4, `${tag}: done, not done, N/A and untick all reached the server in order (untick resets it)`);
+
+  // ticking with no connection: kept on the phone, survives a reload, syncs when the connection returns
+  await context.setOffline(true);
+  await pill("hardware").tap();
+  await waitFor(async () => (await pill("hardware").getAttribute("data-state")) === "done", "offline tick");
+  check((await pill("hardware").getAttribute("data-pending")) === "yes", `${tag}: an offline tick shows as waiting to sync`);
+  await page.reload();
+  await page.getByTestId("project-card").waitFor();
+  await page.getByTestId("open-project").click();
+  await page.locator('[data-room="Kitchen"]').getByTestId("pill-hardware").waitFor();
+  check((await page.locator('[data-room="Kitchen"]').getByTestId("pill-hardware").getAttribute("data-state")) === "done", `${tag}: the offline tick is still there after a reload`);
+  await context.setOffline(false);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await waitFor(async () => (await page.locator('[data-room="Kitchen"]').getByTestId("pill-hardware").getAttribute("data-pending")) === "no", "offline tick synced", 20000);
+  check(true, `${tag}: the offline tick synced when the connection returned`);
+  await page.getByTestId("back-projects").click();
+  await page.getByTestId("project-card").waitFor();
 
   await page.getByRole("button", { name: "Start site audit" }).click();
   await audit(page, `${tag} start audit`); await shot("2-start");
@@ -161,7 +221,7 @@ async function runDevice(browser, name) {
 (async () => {
   for (const u of [MOCK + "/__state", APP]) { let up = false; try { up = (await fetch(u)).ok; } catch {} if (up) throw new Error(`port already in use (stale server?): ${u}`); }
   console.log("== build (pointing the app at the mock server)");
-  execSync("npx vite build", { cwd, stdio: "pipe", env: { ...process.env, VITE_SUPABASE_URL: MOCK, VITE_SUPABASE_PUBLISHABLE_KEY: "test-key", VITE_API_TIMEOUT_MS: "3000", VITE_UPLOAD_TIMEOUT_MS: "6000" } });
+  execSync("npx vite build", { cwd, stdio: "pipe", env: { ...process.env, VITE_SUPABASE_URL: MOCK, VITE_SUPABASE_PUBLISHABLE_KEY: "test-key", VITE_SHOW_AUDIT: "1", VITE_API_TIMEOUT_MS: "3000", VITE_UPLOAD_TIMEOUT_MS: "6000" } });
   const procs = [
     spawn("npx", ["vite-node", "e2e/mock-server.ts"], { cwd, stdio: "pipe", detached: true }),
     spawn("npx", ["vite", "preview", "--port", "4173", "--strictPort", "--host", "127.0.0.1"], { cwd, stdio: "pipe", detached: true }),

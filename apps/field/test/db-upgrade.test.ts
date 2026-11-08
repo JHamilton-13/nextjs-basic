@@ -41,10 +41,23 @@ describe("device database upgrade v2 -> v3 (version-aware audits)", () => {
     expect(q[0]?.op.opId).toBe("o1"); expect(q[0]?.state.status).toBe("pending");
     expect(await db.get("meta", "identity")).toMatchObject({ userId: "u1" });
   });
-  it("a fresh install gets the v3 stores directly", async () => {
+  it("a fresh install gets every store directly (v4 adds room_checks)", async () => {
     const db = await openPhcDb("fresh-1");
-    expect([...db.objectStoreNames].sort()).toEqual(["audits", "items", "meta", "outbox", "photos", "projects", "rooms", "templates"]);
+    expect([...db.objectStoreNames].sort()).toEqual(["audits", "items", "meta", "outbox", "photos", "projects", "room_checks", "rooms", "templates"]);
     await db.put("audits", { key: "X:2", auditId: "X", version: 2, projectId: "P", roomId: null, templateId: "T", createdBy: "u", createdByLabel: "U", createdAt: "t" });
     expect((await db.getAllFromIndex("audits", "by_audit_id", "X"))[0]?.version).toBe(2);
+  });
+});
+
+describe("device database upgrade v3 -> v4 (room checklist)", () => {
+  it("adds the room_checks store and keeps everything already on the device", async () => {
+    await makeV2("upg-v4");
+    (await openPhcDb("upg-v4")).close();                    // now at v4 from v2 (passes through the v3 step)
+    const db = await openPhcDb("upg-v4");
+    expect([...db.objectStoreNames]).toContain("room_checks");
+    expect(await db.get("audits", "A:1")).toMatchObject({ auditId: "A" });
+    expect(await db.getAll("outbox")).toHaveLength(1);
+    await db.put("room_checks", { key: "R:shelves", roomId: "R", projectId: "P", itemKey: "shelves", state: "done", pending: true, nextBase: 1 });
+    expect((await db.getAllFromIndex("room_checks", "by_room", "R"))).toHaveLength(1);
   });
 });

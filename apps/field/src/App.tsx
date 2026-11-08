@@ -9,12 +9,13 @@ import { requestPersistence } from "./lib/storage";
 import type { Identity } from "./lib/types";
 import { SignIn } from "./ui/SignIn";
 import { Projects } from "./ui/Projects";
+import { ProjectView } from "./ui/ProjectView";
 import { StartAudit } from "./ui/StartAudit";
 import { AuditView } from "./ui/AuditView";
 import { Queue } from "./ui/Queue";
 import { StatusBar } from "./ui/StatusBar";
 
-export type View = { name: "projects" } | { name: "start"; projectId: string } | { name: "audit"; auditId: string } | { name: "queue" };
+export type View = { name: "projects" } | { name: "project"; projectId: string } | { name: "start"; projectId: string } | { name: "audit"; auditId: string } | { name: "queue" };
 
 export interface AppCtx {
   db: Db; outbox: Outbox; identity: Identity; tick: number; online: boolean; syncing: boolean; hasSession: boolean;
@@ -88,12 +89,13 @@ export function App() {
       <StatusBar ctx={ctx} />
       <main className="screen">
         {view.name === "projects" && <Projects ctx={ctx} />}
+        {view.name === "project" && <ProjectView ctx={ctx} projectId={view.projectId} />}
         {view.name === "start" && <StartAudit ctx={ctx} projectId={view.projectId} />}
         {view.name === "audit" && <AuditView ctx={ctx} auditId={view.auditId} />}
         {view.name === "queue" && <Queue ctx={ctx} />}
       </main>
       <nav className="tabs">
-        <button className={view.name === "projects" || view.name === "start" || view.name === "audit" ? "active" : ""} onClick={() => setView({ name: "projects" })}>Projects</button>
+        <button className={view.name === "projects" || view.name === "project" || view.name === "start" || view.name === "audit" ? "active" : ""} onClick={() => setView({ name: "projects" })}>Projects</button>
         <button className={view.name === "queue" ? "active" : ""} onClick={() => setView({ name: "queue" })}>Sync queue</button>
       </nav>
     </div>

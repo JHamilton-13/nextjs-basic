@@ -61,3 +61,20 @@ summary { color: var(--info); font-weight: 600; list-style: none; } summary::-we
 summary::before { content: "▸"; display: inline-block; width: 1.1em; transition: transform .15s; } details[open] > summary::before { transform: rotate(90deg); }
 .card > details > summary strong { color: var(--ink); }
 @media (max-width: 360px) { .bar strong { display: none; } .bar { flex-wrap: nowrap; } }
+/* ---- rooms, details and the completion checklist ---- */
+.roomhead { display: flex; align-items: center; justify-content: space-between; gap: .5rem; } .roomhead h2 { margin: 0; }
+.spec { display: flex; flex-wrap: wrap; gap: .15rem 1rem; margin: .5rem 0; font-size: .9rem; } .spec > div { display: flex; gap: .35rem; }
+.spec dt { color: var(--gray); } .spec dd { margin: 0; font-weight: 700; } .spec dd.tbd { color: var(--warn); }
+.pills { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0 .25rem; }
+.pill { display: inline-flex; align-items: center; gap: .35rem; min-height: 44px; padding: .25rem .85rem; border-radius: 999px; border: 1.5px solid #9a9a9a; background: #fff; font-size: .9rem; }
+.pill .mark { display: inline-block; min-width: 1em; font-weight: 800; }
+.pill.done { background: var(--charcoal); border-color: var(--charcoal); color: #fff; }
+.pill.not_done { background: #fff4d6; border-color: var(--warn); color: #5c4400; }
+.pill.na { background: #ececec; border-color: #9a9a9a; color: #444; }
+.pill[data-pending="yes"] { border-style: dashed; }
+.pill.open { outline: 3px solid var(--brass); outline-offset: 1px; }
+.panel { border: 1px solid var(--line); border-radius: 12px; padding: .75rem; margin: .5rem 0; background: var(--paper); }
+.panel textarea { display: block; width: 100%; margin-top: .25rem; padding: .5rem .75rem; font: inherit; border: 1px solid #aab1bc; border-radius: 8px; background: #fff; }
+.btnrow button.on { background: var(--charcoal); color: #fff; border-color: var(--charcoal); }
+.notdone-note { margin: .4rem 0; font-size: .9rem; }
+.panel, .pills, .panel .btnrow, .notdone-note { scroll-margin-bottom: 6rem; }   /* keep the buttons clear of the sticky tab bar when scrolled into view */

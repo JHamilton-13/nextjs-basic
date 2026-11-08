@@ -1,7 +1,32 @@
 import type { ClientOpState, OperationEnvelope } from "@phc/domain";
 
 export interface ProjectRow { id: string; name: string; customer: string | null; address: string | null }
-export interface RoomRow { id: string; project_id: string; name: string; floor: string | null }
+export interface RoomRow {
+  id: string; project_id: string; name: string; floor: string | null;
+  /** Room spec fields (panelName, woodSpecies, ...), text only. Never holds PHC-only notes (the database refuses them). */
+  details?: Record<string, string>;
+  /** cockpit | masterfile | warehouse_tracker | manual */
+  details_source?: string | null;
+}
+
+export type CheckState = "done" | "not_done" | "na";
+/** One pill on a room's completion checklist. No record = nobody has acted on it yet. */
+export interface LocalRoomCheck {
+  /** `${roomId}:${itemKey}` — also the apply_op entityId. */
+  key: string;
+  roomId: string;
+  projectId: string;
+  itemKey: string;
+  state: CheckState;
+  /** Required when state is not_done (why it is not finished). */
+  note?: string;
+  /** Who set it and when it happened on site (not when it synced). */
+  by?: string;
+  at?: string;
+  pending: boolean;
+  /** baseVersion for the NEXT op on this item (server row_version, plus ops already queued; 0 once cleared). */
+  nextBase: number;
+}
 
 /** Template config exactly as stored in audit_templates.config (see docs/architecture/audit-template-config.md). */
 export interface TemplateItemDef {

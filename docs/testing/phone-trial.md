@@ -1,3 +1,5 @@
+> UPDATE 2026-11-08 (step 7): installers no longer see the pre-install audit. Use the "Rooms and checklist" script at the end of this file; the audit steps below apply only to builds with `VITE_SHOW_AUDIT=1`.
+
 # Phone trial kit — installer PWA
 
 Purpose: find what only a real phone can show. Automated emulation (see `step6-phone-readiness-results.md`) already checked layout, tap sizes,
@@ -52,3 +54,14 @@ needed a connection that should not have, anything you could not tap or read, an
 
 ## Cleanup
 Delete the PHONE TRIAL project data (ask me; audit history is protected from deletion in the app on purpose) and remove test users' invites.
+
+
+## Rooms and checklist (current installer build, ~15 minutes)
+1. Sign in. You should see your project(s) with "N rooms". Tap **Open rooms**.
+2. Each room shows its details (Panel Name, Wood Species, Finish Name, Edgebanding). Tap **More details**: unmade decisions show in amber as TBD. Nothing labelled PHC-only should appear.
+3. Tap a pill once: it turns black with a check and the room count goes up (e.g. 1/11). It should say "waiting to sync" briefly, then sync.
+4. Tap the marked pill: a panel shows who marked it and when. Choose **Not done**, try to save with no note (it must refuse), then type a note and save. The note appears under the checklist.
+5. Try **N/A**, then **Clear**.
+6. Turn on airplane mode. Tick two pills. Close the app fully, reopen it: the ticks must still be there, shown as waiting. Turn airplane mode off: they sync and the badge returns to "All synced".
+7. Check the Sync queue tab lists them as "Room checklist".
+8. Send back: device, step number, what you expected vs what happened, a screenshot for anything odd (is anything hard to tap? any pill label cut off? anything too small to read outdoors?).

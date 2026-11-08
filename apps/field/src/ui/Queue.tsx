@@ -1,8 +1,10 @@
 import type { AppCtx } from "../App";
+import { ROOM_CHECK_ITEMS } from "../lib/roomChecks";
 import { useLive } from "./useLive";
 import { fmtBytes, readStorage, storageWarning } from "../lib/storage";
 
-const WHAT = (e: string) => (e === "audit" ? "Create audit" : e === "audit_item" ? "Save measurement" : e);
+const WHAT = (e: string) => (e === "audit" ? "Create audit" : e === "audit_item" ? "Save measurement" : e === "room_check" ? "Room checklist" : e);
+const WHICH = (op: { entity: string; entityId: string }) => { const k = op.entityId.split(":").slice(-1)[0]!; return op.entity === "room_check" ? (ROOM_CHECK_ITEMS.find((i) => i.key === k)?.label ?? k) : k; };
 
 export function Queue({ ctx }: { ctx: AppCtx }) {
   const rows = useLive(ctx.tick, () => ctx.outbox.list());
@@ -40,7 +42,7 @@ export function Queue({ ctx }: { ctx: AppCtx }) {
       <ul className="plain" data-testid="queue-list">
         {rows?.map((r) => (
           <li className="row static" key={r.seq} data-testid="queue-row">
-            <span>{WHAT(r.op.entity)}<small> · {r.op.entityId.split(":").slice(-1)[0]}</small></span>
+            <span>{WHAT(r.op.entity)}<small> · {WHICH(r.op)}</small></span>
             <span className={`chip ${r.state.status === "confirmed" ? "good" : r.state.status === "conflict" || (r.state.status === "failed" && !r.state.retryable) ? "bad" : "warn"}`} data-testid="queue-status">
               {r.state.status === "failed" ? (r.state.retryable ? "will retry" : "rejected") : r.state.status === "confirmed" ? "synced" : r.state.status}
             </span>

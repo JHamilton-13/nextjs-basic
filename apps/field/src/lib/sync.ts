@@ -4,13 +4,14 @@ import { replaceCache } from "./db";
 import { reconcileFromServer, type ServerItemRow } from "./audits";
 import { finalizeConfirmedPhotos } from "./photos";
 import type { DrainSummary, Outbox } from "./outbox";
+import { reconcileRoomChecks, type ServerCheckRow } from "./roomChecks";
 import type { ProjectRow, RoomRow, TemplateRow } from "./types";
 
 /** Downloads what this user may see (RLS decides) into IndexedDB so the app works offline. */
 export async function pullCache(sb: SupabaseClient, db: Db): Promise<void> {
   const [p, r, t] = await Promise.all([
     sb.from("projects").select("id,name,customer,address").is("archived_at", null),
-    sb.from("rooms").select("id,project_id,name,floor"),
+    sb.from("rooms").select("id,project_id,name,floor,details,details_source"),
     sb.from("audit_templates").select("id,name,version,config").eq("active", true),
   ]);
   const failed = p.error ?? r.error ?? t.error;
@@ -47,6 +48,23 @@ export async function pullAuditResults(sb: SupabaseClient, db: Db, outbox: Outbo
   }
 }
 
+/**
+ * After a drain: for each room with nothing left in the queue, replace the local checklist with the server's.
+ * (The outbox groups a room's checklist operations under the room id.)
+ */
+export async function pullRoomChecks(sb: SupabaseClient, db: Db, outbox: Outbox): Promise<void> {
+  const queue = await outbox.list();
+  const rooms = await db.getAll("rooms");
+  if (rooms.length === 0) return;
+  const res = await sb.from("room_checks").select("room_id,project_id,item_key,state,note,checked_at,row_version,by:profiles!room_checks_checked_by_fkey(full_name,email)");
+  if (res.error) throw new Error(res.error.message);
+  const rows = (res.data ?? []) as unknown as (Omit<ServerCheckRow, "by_label"> & { by: unknown })[];
+  for (const room of rooms) {
+    if (queue.some((q) => q.auditId === room.id && q.state.status !== "confirmed")) continue; // still has unsynced ticks: keep local state
+    await reconcileRoomChecks(db, room.id, rows.filter((r) => r.room_id === room.id).map((r) => ({ ...r, by_label: labelOf(r.by) })));
+  }
+}
+
 /** For audits whose submit reached the server, ask the server for the authoritative readiness. */
 export async function pullAuditStates(sb: SupabaseClient, db: Db, outbox: Outbox): Promise<void> {
   const queue = await outbox.list();
@@ -74,6 +92,7 @@ export async function syncNow(deps: { sb: SupabaseClient; db: Db; outbox: Outbox
     await pullAuditResults(sb, db, outbox);
     await pullAuditStates(sb, db, outbox);
     await pullCache(sb, db);
+    await pullRoomChecks(sb, db, outbox);
     return { ...sum, pulled: true };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
