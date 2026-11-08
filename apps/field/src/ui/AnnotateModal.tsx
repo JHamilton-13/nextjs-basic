@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { AppCtx } from "../App";
-import { drawShapes, PALETTE, simplifyPoints, type Pt, type Shape } from "../lib/annotations";
+import { drawShapes, ERASER_RADIUS, hitsShape, PALETTE, simplifyPoints, type Pt, type Shape } from "../lib/annotations";
 import { flattenAnnotated } from "../lib/imaging";
 import { addAnnotatedPhoto } from "../lib/photos";
 import type { LocalPhoto } from "../lib/types";
 
-type Tool = "pen" | "highlight" | "text";
+type Tool = "pen" | "highlight" | "text" | "erase";
 const WIDTHS = [0.004, 0.008, 0.016];          // pen width as a fraction of the image width
 const TEXT_SIZES = [0.035, 0.05, 0.075];        // text height as a fraction of the image height
 
@@ -19,6 +19,9 @@ export function AnnotateModal({ ctx, source, original, initial, onClose }: { ctx
   const img = useRef<HTMLImageElement | null>(null);
   const live = useRef<Pt[] | null>(null);
   const [shapes, setShapes] = useState<Shape[]>(initial);
+  const cur = useRef<Shape[]>(initial);            // always the latest marks (state can lag inside pointer handlers)
+  const [past, setPast] = useState<Shape[][]>([]);   // undo history: every add, erase gesture and clear is one step
+  const erasing = useRef<{ pushed: boolean } | null>(null);
   const [tool, setTool] = useState<Tool>("pen");
   const [colorIdx, setColorIdx] = useState(0);
   const [thick, setThick] = useState(1);
@@ -72,28 +75,41 @@ export function AnnotateModal({ ctx, source, original, initial, onClose }: { ctx
   };
   const strokeShape = (points: Pt[]): Shape => ({ type: tool === "highlight" ? "highlight" : "pen", color, width: WIDTHS[thick]! * (tool === "highlight" ? 3 : 1), points });
 
+  function commit(next: Shape[]) { const prev = cur.current; setPast((p) => [...p, prev]); cur.current = next; setShapes(next); }
+  function undo() { const prev = past[past.length - 1]; if (!prev) return; cur.current = prev; setShapes(prev); setPast((p) => p.slice(0, -1)); }
+  function erase(p: Pt) {
+    const c = canvas.current!; const g = erasing.current!;
+    const keep = cur.current.filter((s) => !hitsShape(s, p, ERASER_RADIUS, c.width, c.height));
+    if (keep.length === cur.current.length) return;
+    if (!g.pushed) { g.pushed = true; const prev = cur.current; setPast((q) => [...q, prev]); }     // one undo step per drag
+    cur.current = keep; setShapes(keep);
+  }
+
   function down(e: React.PointerEvent) {
     if (!ready) return;
     e.preventDefault();
+    if (tool === "erase") { (e.target as Element).setPointerCapture(e.pointerId); erasing.current = { pushed: false }; erase(at(e)); return; }
     if (tool === "text") { setPending(at(e)); setText(""); return; }
     (e.target as Element).setPointerCapture(e.pointerId);
     live.current = [at(e)];
     paint(strokeShape(live.current));
   }
   function move(e: React.PointerEvent) {
+    if (erasing.current) { erase(at(e)); return; }
     if (!live.current) return;
     live.current.push(at(e));
     paint(strokeShape(live.current));
   }
   function up() {
+    if (erasing.current) { erasing.current = null; return; }
     if (!live.current) return;
     const pts = simplifyPoints(live.current);
     live.current = null;
-    setShapes((s) => [...s, strokeShape(pts)]);
+    commit([...cur.current, strokeShape(pts)]);
   }
   function addText() {
     if (!pending || !text.trim()) return;
-    setShapes((s) => [...s, { type: "text", color, size: TEXT_SIZES[thick]!, at: pending, text: text.trim().slice(0, 200) }]);
+    commit([...cur.current, { type: "text", color, size: TEXT_SIZES[thick]!, at: pending, text: text.trim().slice(0, 200) }]);
     setPending(null); setText("");
   }
   async function save() {
@@ -124,19 +140,19 @@ export function AnnotateModal({ ctx, source, original, initial, onClose }: { ctx
           <button className="primary" onClick={addText} data-testid="text-add">Add</button>
         </div>
       )}
-      <div className="tools" data-testid="tools">
+      <div className="tools" data-testid="tools" data-marks={shapes.length}>
         <div className="toolrow">
-          {(["pen", "highlight", "text"] as Tool[]).map((t) => (
-            <button key={t} className={tool === t ? "on" : ""} onClick={() => { setTool(t); setPending(null); }} data-testid={`tool-${t}`}>{t === "pen" ? "Pen" : t === "highlight" ? "Highlight" : "Text"}</button>
+          {(["pen", "highlight", "text", "erase"] as Tool[]).map((t) => (
+            <button key={t} className={tool === t ? "on" : ""} onClick={() => { setTool(t); setPending(null); }} data-testid={`tool-${t}`}>{t === "pen" ? "Pen" : t === "highlight" ? "Highlight" : t === "text" ? "Text" : "Erase"}</button>
           ))}
-          <button disabled={shapes.length === 0} onClick={() => setShapes((s) => s.slice(0, -1))} data-testid="undo">Undo</button>
+          <button disabled={past.length === 0} onClick={undo} data-testid="undo">Undo</button>
         </div>
         <div className="toolrow">
           {PALETTE.map((c, i) => <button key={c} aria-label={`Color ${i + 1}`} className={`sw ${colorIdx === i ? "on" : ""}`} style={{ background: c }} onClick={() => setColorIdx(i)} data-testid={`color-${i}`} />)}
         </div>
         <div className="toolrow">
           {["Thin", "Medium", "Thick"].map((l, i) => <button key={l} className={thick === i ? "on" : ""} onClick={() => setThick(i)} data-testid={`thick-${i}`}>{l}</button>)}
-          <button disabled={shapes.length === 0} onClick={() => setShapes([])}>Clear</button>
+          <button disabled={shapes.length === 0} onClick={() => commit([])} data-testid="clear">Clear</button>
         </div>
       </div>
       <p className="muted small note">The original photo is never changed. Saving creates a marked-up copy.</p>

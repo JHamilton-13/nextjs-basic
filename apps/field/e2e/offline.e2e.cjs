@@ -246,7 +246,7 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     check((await out.locator('[data-annotated="yes"]').count()) === 1 && (await out.getByTestId("photo-kind").innerText()) === "Marked up", "offline: a marked-up COPY is saved next to the originals");
 
     await out.getByTestId("edit-marks").click();
-    await waitFor(async () => (await page.getByTestId("undo").isEnabled()), "editor reopened with the saved marks");
+    await waitFor(async () => Number(await page.getByTestId("tools").getAttribute("data-marks")) > 0, "editor reopened with the saved marks");
     check(true, "the saved marks reopen for editing (marks are stored as editable data, not just pixels)");
     await page.getByTestId("cancel-annotation").click();
 

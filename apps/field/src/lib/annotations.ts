@@ -51,6 +51,32 @@ export function simplifyPoints(points: Pt[], max: number = LIMITS.points): Pt[] 
   return out;
 }
 
+/** Eraser radius as a fraction of the image width (about a fingertip on a phone screen). */
+export const ERASER_RADIUS = 0.035;
+
+function segDist(px: number, py: number, ax: number, ay: number, bx: number, by: number): number {
+  const dx = bx - ax, dy = by - ay; const len2 = dx * dx + dy * dy;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/** True when an eraser touch at normalized point `p` (radius `r`, as a fraction of image width) touches the mark, on a w x h image. */
+export function hitsShape(s: Shape, p: Pt, r: number, w: number, h: number): boolean {
+  const px = p[0] * w, py = p[1] * h, rad = r * w;
+  if (s.type === "text") {
+    const size = Math.max(8, Math.round(s.size * h));
+    const x0 = s.at[0] * w, y0 = s.at[1] * h, bw = s.text.length * size * 0.6;   // same size rule as drawShapes; width is an estimate
+    return px >= x0 - rad && px <= x0 + bw + rad && py >= y0 - rad && py <= y0 + size + rad;
+  }
+  const tol = rad + (s.width * w) / 2;
+  const pts = s.points;
+  if (pts.length === 1) return Math.hypot(px - pts[0]![0] * w, py - pts[0]![1] * h) <= tol;
+  for (let i = 1; i < pts.length; i++) {
+    if (segDist(px, py, pts[i - 1]![0] * w, pts[i - 1]![1] * h, pts[i]![0] * w, pts[i]![1] * h) <= tol) return true;
+  }
+  return false;
+}
+
 /** The subset of CanvasRenderingContext2D we draw with (so drawing can be tested without a browser). */
 export interface Canvas2DLike {
   save(): void; restore(): void; beginPath(): void; moveTo(x: number, y: number): void; lineTo(x: number, y: number): void;

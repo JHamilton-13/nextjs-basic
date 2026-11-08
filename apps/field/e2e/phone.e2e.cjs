@@ -105,6 +105,17 @@ async function runDevice(browser, name) {
   await page.touchscreen.tap(...at(0.3, 0.1));
   await page.getByTestId("text-input").fill("outlet 6in left of spec");
   await page.getByTestId("text-add").click();
+  // ---- eraser ----
+  const marksNow = async () => Number(await page.getByTestId("tools").getAttribute("data-marks"));
+  check((await marksNow()) === 3, `${tag}: three marks before erasing (pen, highlight, text)`);
+  await page.getByTestId("tool-erase").click();
+  await touchStroke(cdp, [at(0.05, 0.6), at(0.4, 0.6), at(0.9, 0.6)]);   // drag a finger across the highlight
+  check((await marksNow()) === 2, `${tag}: dragging the eraser across the highlight removes just that mark (${await marksNow()} left)`);
+  await page.getByTestId("undo").click();
+  check((await marksNow()) === 3, `${tag}: Undo brings the erased mark back`);
+  await touchStroke(cdp, [at(0.5, 0.95), at(0.6, 0.95)]);                  // empty area: nothing to erase
+  check((await marksNow()) === 3, `${tag}: erasing over empty photo removes nothing`);
+  await page.getByTestId("tool-pen").click();
   await shot("7-annotated");
   await page.getByTestId("save-annotation").click();
   await waitFor(async () => (await outlets.getByTestId("photo-thumb").count()) === 2, "marked-up copy");

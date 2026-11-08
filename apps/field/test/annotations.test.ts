@@ -95,3 +95,29 @@ describe("drawShapes (normalized coordinates scale to any image size)", () => {
     expect(r.calls.filter((x) => x.startsWith("restore")).length).toBe(3);
   });
 });
+
+import { hitsShape, ERASER_RADIUS } from "../src/lib/annotations";
+describe("eraser hit-testing", () => {
+  const line: Shape = { type: "pen", color: "#e53935", width: 0.004, points: [[0.1, 0.5], [0.9, 0.5]] };
+  const dot: Shape = { type: "pen", color: "#e53935", width: 0.004, points: [[0.5, 0.5]] };
+  const label: Shape = { type: "text", color: "#111111", size: 0.05, at: [0.2, 0.2], text: "Move fan" };
+  it("hits a stroke when the touch is on or near it", () => {
+    expect(hitsShape(line, [0.5, 0.5], ERASER_RADIUS, 1000, 1000)).toBe(true);
+    expect(hitsShape(line, [0.5, 0.52], ERASER_RADIUS, 1000, 1000)).toBe(true);
+  });
+  it("misses a stroke when the touch is clearly away from it", () => {
+    expect(hitsShape(line, [0.5, 0.7], ERASER_RADIUS, 1000, 1000)).toBe(false);
+    expect(hitsShape(line, [0.95, 0.5], 0.01, 1000, 1000)).toBe(false);
+  });
+  it("handles a single-point dot and a text label", () => {
+    expect(hitsShape(dot, [0.5, 0.51], ERASER_RADIUS, 1000, 1000)).toBe(true);
+    expect(hitsShape(dot, [0.8, 0.8], ERASER_RADIUS, 1000, 1000)).toBe(false);
+    expect(hitsShape(label, [0.25, 0.22], ERASER_RADIUS, 1000, 1000)).toBe(true);
+    expect(hitsShape(label, [0.8, 0.9], ERASER_RADIUS, 1000, 1000)).toBe(false);
+  });
+  it("accounts for a non-square image", () => {
+    // 2000x1000: a 0.035-of-width radius is 70px, so 60px above the line is a hit but 100px is not
+    expect(hitsShape(line, [0.5, 0.56], ERASER_RADIUS, 2000, 1000)).toBe(true);
+    expect(hitsShape(line, [0.5, 0.62], ERASER_RADIUS, 2000, 1000)).toBe(false);
+  });
+});
