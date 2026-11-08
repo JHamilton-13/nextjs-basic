@@ -1,7 +1,7 @@
 # Step 5 test results — revise (offline), photo annotation, who/when
 
 Date: 2026-11-08. Owner choices: revise works offline; annotation tools = freehand pen, highlighter, text label; the audit and each line item carry user + timestamp, photos carry none.
-Migration 1100 is written and tested locally; NOT applied to the live project (awaiting owner approval).
+Migration 1100 was written and tested locally, then APPLIED to the live project on 2026-11-08 after owner approval (verified: new columns, constraints, trigger, revise op and evidence rule present; validator accepts good marks and rejects an arrow and an out-of-range coordinate; no new security advisor findings other than an unrelated note that leaked-password protection is off, which does not matter because the app never uses passwords).
 
 ## Database (local Postgres 16): 276 assertions + concurrency (39 new, in `supabase/tests/06_annotations_attribution_revise.sql`)
 Mutation checks (temporary edits to migration 1100, all caught): annotated copies counted as evidence; photos counted only within one version; issue time = sync time;
@@ -125,7 +125,7 @@ E2E PASSED: 74 checks
 - Device database upgraded to v3 (version-aware audits/items/photos) in place, preserving unsynced work.
 
 ## Known gaps / not verified
-- **Until migration 1100 is applied to the live project, Revise and annotated copies will be rejected by the server** (the app keeps working and shows them as "need attention"); who/when displays fall back gracefully (basic columns) and ordinary photos/results are unaffected.
+- (Resolved: migration 1100 is now applied.) Before it was applied, Revise and annotated copies would have been rejected by the server (the app keeps working and shows them as "need attention"); who/when displays fall back gracefully (basic columns) and ordinary photos/results are unaffected.
 - Real devices: touch drawing on iOS/Android (pointer events + `touch-action: none`) is untested; no pinch-zoom inside the editor, so fine marks on a small screen are less precise. No eraser beyond Undo/Clear; 3 pen widths, 3 text sizes, 5 colors.
 - Real Storage download of an original (used when the image already left the phone) is verified against the mock only.
 - No conflict-resolution screen yet: a conflicting revise or result shows in the sync queue as "needs attention".

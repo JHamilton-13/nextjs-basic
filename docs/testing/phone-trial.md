@@ -6,12 +6,18 @@ profiles. It could NOT test iOS Safari (WebKit), the real camera, HEIC photos, r
 
 ## Before anyone can test (owner actions; nothing here has been done on the live project)
 1. **The app must be reachable from the phone over HTTPS** (service workers and the camera need a secure origin). Pick one:
-   - Host the built app (`apps/field/dist`) on a static host. `apps/field/vercel.json` is ready for Vercel; Netlify/Cloudflare Pages/GitHub Pages also work (single-page-app fallback to `index.html`).
+   - Host the built app (`apps/field/dist`) on a static host. `vercel.json` at the repo root is ready for Vercel; Netlify/Cloudflare Pages/GitHub Pages also work (single-page-app fallback to `index.html`).
      Build settings: command `npm run build -w @phc/field`, output `apps/field/dist`, env `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` (public values only; never a service/secret key).
    - or a temporary HTTPS tunnel to a build running on a computer (`npm run preview -w @phc/field`); fine for a day, not for a crew.
 2. **Supabase > Authentication > URL Configuration**: add the app's HTTPS address as the Site URL / a Redirect URL (Google sign-in returns there). In Google Cloud, the OAuth client's redirect stays Supabase's callback URL.
-3. **Apply migration 1100** (Revise and marked-up copies are rejected by the live server until then).
-4. **Trial data in the live project** (it currently has 0 projects, rooms, templates): a project clearly named "PHONE TRIAL - delete later", one room, and the example audit template (`supabase/seed.sql`). As admin you can already create audits on any project; invite any other tester's email first (Authentication hook only lets invited emails in) and add them to the project as installer.
+3. **Migration 1100** — DONE 2026-11-08 (live project verified).
+4. **Trial data** — DONE 2026-11-08: project "PHONE TRIAL - delete later" (id `bbbbbbbb-0000-4000-8000-000000000001`), room "Kitchen (trial)", and the EXAMPLE audit template (42 items, 8 critical). As admin you can create audits on it. To add another tester: invite their email first (the sign-in hook only lets invited emails in), then add them to the project as installer.
+
+### Vercel setup (owner)
+1. Vercel > Add New > Project > import the GitHub repo `JHamilton-13/nextjs-basic`. Leave Root Directory at the repo root (`vercel.json` supplies build command and output directory).
+2. Environment variables (Production and Preview): `VITE_SUPABASE_URL` = `https://zuyzxkkmsyuybbznelql.supabase.co` and `VITE_SUPABASE_PUBLISHABLE_KEY` = the project's publishable key (Supabase > Project Settings > API Keys > `sb_publishable_...`; public by design, safe in the browser). Never add a secret/service-role key.
+3. The work is on branch `claude/foundation-audit-spec`, not `main`. Either deploy that branch (Vercel gives it a preview URL) or merge PR #1 first. **Preview deployments are behind Vercel Authentication by default, which would ask every phone to log in to Vercel: turn it off for this project (Settings > Deployment Protection) or use the production domain.**
+4. Copy the final HTTPS address into Supabase > Authentication > URL Configuration (Site URL and Redirect URLs).
 
 ## Devices
 Ideally one iPhone (Safari, current iOS) and one Android (Chrome), plus the oldest phone an installer actually uses. Record model, OS version, browser version.
