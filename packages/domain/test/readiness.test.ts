@@ -9,7 +9,7 @@ const policyMgr: ReadinessPolicy = { nonCriticalIssueState: "manager_review_requ
 const policyExc: ReadinessPolicy = { nonCriticalIssueState: "ready_with_exceptions" };
 
 const item = (itemId: string, result: AuditItemOutcome["result"], o: Partial<AuditItemOutcome> = {}): AuditItemOutcome =>
-  ({ itemId, critical: false, required: true, result, ...o });
+  ({ itemId, critical: false, result, ...o });
 
 const audit = (items: AuditItemOutcome[], o: Partial<AuditRecord> = {}): AuditRecord => ({
   auditId: "a1", projectId: "p1", version: 1, submitted: false, items, overrides: [], ...o,
@@ -53,28 +53,35 @@ describe("auditState derivation", () => {
     expect(auditState(a, policyExc)).toBe("not_ready");
   });
   it("observation items and not-applicable items never affect readiness", () => {
-    const a = sub(audit([item("plumb", "OBSERVED", { required: false }), item("na", "NOT_APPLICABLE"), item("w1", "PASS")]));
+    const a = sub(audit([item("plumb", "OBSERVED"), item("na", "NOT_APPLICABLE"), item("w1", "PASS")]));
     expect(auditState(a, policyMgr)).toBe("ready");
   });
 });
 
-describe("submitAudit", () => {
-  it("is blocked while a required item has no result", () => {
+describe("submitAudit (owner decision 2026-11-08: no required-result gating)", () => {
+  it("can be submitted with items still not entered", () => {
     const r = submitAudit(audit([item("w1", "PASS"), item("w2", "NOT_ENTERED")]), "u", T(1));
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.error.code).toBe("required_items_incomplete");
-      expect(r.error.itemIds).toEqual(["w2"]);
-    }
-  });
-  it("allows optional items to stay unentered", () => {
-    const r = submitAudit(audit([item("w1", "PASS"), item("plumb", "NOT_ENTERED", { required: false })]), "u", T(1));
     expect(r.ok).toBe(true);
+  });
+  it("can be submitted with zero items", () => {
+    const r = submitAudit(audit([]), "u", T(1));
+    expect(r.ok).toBe(true);
+  });
+  it("unentered items do not affect the derived state once submitted", () => {
+    expect(auditState(sub(audit([item("w1", "PASS"), item("w2", "NOT_ENTERED")])), policyMgr)).toBe("ready");
+    expect(auditState(sub(audit([])), policyMgr)).toBe("ready");
+  });
+  it("a critical FAIL still blocks even if other items are unentered", () => {
+    expect(auditState(sub(audit([item("mep1", "FAIL", { critical: true }), item("w2", "NOT_ENTERED")])), policyMgr)).toBe("not_ready");
   });
   it("cannot submit twice", () => {
     const a = sub(audit([item("w1", "PASS")]));
     const r = submitAudit(a, "u", T(2));
     expect(!r.ok && r.error.code).toBe("already_submitted");
+  });
+  it("requires a user and a valid timestamp", () => {
+    expect(submitAudit(audit([]), " ", T(1)).ok).toBe(false);
+    expect(submitAudit(audit([]), "u", "nope").ok).toBe(false);
   });
   it("emits an audit_submitted event", () => {
     const r = submitAudit(audit([item("w1", "PASS")]), "inst1", T(1));
@@ -103,7 +110,11 @@ describe("submitted audits are immutable", () => {
 });
 
 describe("release: clear audit", () => {
-  it("manager can release a ready audit", () => {
+  it.each(["admin", "production_manager", "project_manager", "installation_manager"] as const)("%s can release a ready audit", (role) => {
+    const a = sub(audit([item("w1", "PASS")]));
+    expect(release(a, { userId: "m1", role }, T(5), policyMgr).ok).toBe(true);
+  });
+  it("manager can release a ready audit and the record is complete", () => {
     const a = sub(audit([item("w1", "PASS")]));
     const r = release(a, { userId: "pm1", role: "project_manager" }, T(5), policyMgr);
     expect(r.ok).toBe(true);
@@ -113,14 +124,14 @@ describe("release: clear audit", () => {
       expect(r.value.event.type).toBe("released");
     }
   });
-  it("roles outside the release set cannot release (e.g. client, warehouse)", () => {
+  it("only the four manager roles can release (owner decision 2026-11-08)", () => {
     const a = sub(audit([item("w1", "PASS")]));
-    for (const role of ["client", "general_contractor", "warehouse", "shop", "service_technician"] as const) {
+    for (const role of ["installer", "client", "general_contractor", "warehouse", "shop", "service_technician"] as const) {
       const r = release(a, { userId: "x", role }, T(5), policyMgr);
       expect(!r.ok && r.error.code).toBe("role_not_authorized");
     }
   });
-  it("cannot release before the inspection is complete", () => {
+  it("cannot release an audit that has not been submitted", () => {
     const r = release(audit([item("w1", "PASS"), item("w2", "NOT_ENTERED")]), { userId: "pm1", role: "project_manager" }, T(5), policyMgr);
     expect(!r.ok && r.error.code).toBe("inspection_not_complete");
   });
@@ -144,10 +155,16 @@ describe("release: stop-gate (scenarios 3, 4, 5, 19)", () => {
       expect(r.error.failedItemIds).toEqual(["mep1"]);
     }
   });
-  it("blocks an installer from proceeding without authorization", () => {
+  it("blocks an installer from proceeding without authorization (scenario 4)", () => {
     const r = release(failed(), { userId: "inst1", role: "installer" }, T(5), policyMgr);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error.code).toBe("override_required");
+    if (!r.ok) expect(r.error.code).toBe("role_not_authorized");
+  });
+  it("an installer still cannot release after a manager override; a manager must", () => {
+    const g = grantOverride(failed(), { id: "o1", grantedBy: "pm1", role: "project_manager", reason: "r", at: T(6) }, policyMgr);
+    if (!g.ok) throw new Error("setup");
+    const r = release(g.value.audit, { userId: "inst1", role: "installer" }, T(7), policyMgr);
+    expect(!r.ok && r.error.code).toBe("role_not_authorized");
   });
   it("installer cannot grant an override", () => {
     const g = grantOverride(failed(), { id: "o1", grantedBy: "inst1", role: "installer", reason: "need to work", at: T(6) }, policyMgr);
@@ -188,10 +205,10 @@ describe("release: stop-gate (scenarios 3, 4, 5, 19)", () => {
   it("after an override, release succeeds and records the override as the basis", () => {
     const g = grantOverride(failed(), { id: "o1", grantedBy: "pm1", role: "project_manager", reason: "r", at: T(6) }, policyMgr);
     if (!g.ok) throw new Error("setup");
-    const r = release(g.value.audit, { userId: "inst1", role: "installer" }, T(7), policyMgr);
+    const r = release(g.value.audit, { userId: "pm1", role: "project_manager" }, T(7), policyMgr);
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.value.audit.release).toMatchObject({ basis: "override", overrideId: "o1", releasedBy: "inst1", auditVersion: 1 });
+      expect(r.value.audit.release).toMatchObject({ basis: "override", overrideId: "o1", releasedBy: "pm1", auditVersion: 1 });
       expect(auditState(r.value.audit, policyMgr)).toBe("released_for_installation");
     }
   });

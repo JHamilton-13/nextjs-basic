@@ -17,8 +17,6 @@ export interface AuditItemOutcome {
   itemId: string;
   /** Critical items (MEP rough-in conflicts) stop the gate on FAIL. */
   critical: boolean;
-  /** Required items must have a result before the audit can be submitted. */
-  required: boolean;
   result: ItemResult;
 }
 
@@ -80,8 +78,6 @@ export interface AuditEvent {
 export interface ReadinessError {
   code:
     | "already_submitted"
-    | "no_items"
-    | "required_items_incomplete"
     | "audit_submitted"
     | "unknown_item"
     | "invalid_timestamp"
@@ -108,10 +104,6 @@ const entered = (i: AuditItemOutcome) => i.result !== "NOT_ENTERED";
 
 export const isEditable = (a: AuditRecord): boolean => !a.submitted;
 
-function requiredIncomplete(a: AuditRecord): string[] {
-  return a.items.filter((i) => i.required && i.result === "NOT_ENTERED").map((i) => i.itemId);
-}
-
 /** Items that FAILED or need REVIEW (excludes observation / N/A). */
 function problemItemIds(a: AuditRecord): string[] {
   return a.items.filter((i) => i.result === "FAIL" || i.result === "REVIEW").map((i) => i.itemId);
@@ -128,7 +120,9 @@ export function auditState(a: AuditRecord, policy: ReadinessPolicy): ReadinessSt
   const criticalFail = a.items.some((i) => i.critical && i.result === "FAIL");
   if (criticalFail) return "not_ready";
 
-  if (!a.submitted || requiredIncomplete(a).length > 0) {
+  // Owner decision 2026-11-08: submitting does not require every item to have a result, so once
+  // submitted, items that were never entered simply do not count.
+  if (!a.submitted) {
     return a.items.some(entered) ? "in_progress" : "not_started";
   }
   if (a.items.some((i) => i.critical && i.result === "REVIEW")) return "manager_review_required";
@@ -152,9 +146,6 @@ export function submitAudit(a: AuditRecord, userId: string, at: string): Result<
   if (!filled(userId)) return e("user_required", "A submitting user is required");
   if (!isValidTimestamp(at)) return e("invalid_timestamp", "Timestamp is not a valid date-time");
   if (a.submitted) return e("already_submitted", "This audit version is already submitted");
-  if (a.items.length === 0) return e("no_items", "An audit with no items cannot be submitted");
-  const missing = requiredIncomplete(a);
-  if (missing.length > 0) return e("required_items_incomplete", "Required items still have no result", { itemIds: missing });
   const audit: AuditRecord = { ...a, submitted: true, submittedAt: at, submittedBy: userId };
   return ok({ audit, event: event(audit, "audit_submitted", userId, at) });
 }

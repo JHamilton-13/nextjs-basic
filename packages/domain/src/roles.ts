@@ -14,11 +14,10 @@ export type Role =
 export const OVERRIDE_ROLES: readonly Role[] = ["admin", "production_manager", "project_manager", "installation_manager"];
 
 /**
- * Default roles allowed to release a project for installation once an audit is clear or overridden.
- * Managers plus installers (an installer proceeds after a manager's documented override).
- * Configurable through ReadinessPolicy.releaseRoles. Flagged for owner confirmation in docs/MILESTONES.md.
+ * Roles allowed to release a project for installation once an audit is clear or overridden.
+ * Managers only (owner decision 2026-11-08). Configurable through ReadinessPolicy.releaseRoles.
  */
-export const DEFAULT_RELEASE_ROLES: readonly Role[] = [...OVERRIDE_ROLES, "installer"];
+export const DEFAULT_RELEASE_ROLES: readonly Role[] = [...OVERRIDE_ROLES];
 
 export const isOverrideRole = (role: string): role is Role => (OVERRIDE_ROLES as readonly string[]).includes(role);
 
