@@ -4,7 +4,9 @@ import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { ROOM_CHECK_ITEMS } from "../src/lib/roomChecks";
-import { applyOperation, auditState, emptyServerState, evaluate, type AuditItemOutcome, type ServerState } from "@phc/domain";
+import { applyOperation, auditState, emptyServerState, evaluate, isValidEmail, type AuditItemOutcome, type ServerState } from "@phc/domain";
+import { fakeTransport, handleReportsRequest, ReportError, type ReportDb, type ReportRow, type ReportStorage } from "@phc/reports";
+import { Buffer as NodeBuffer } from "node:buffer";
 
 const PORT = Number(process.env.MOCK_PORT ?? 54500);
 const TOKEN = "test-token";
@@ -44,6 +46,13 @@ const objects = new Map<string, number>();
 const objectBytes = new Map<string, Buffer>();
 let storageDown = false;
 
+// ---- reports (mirrors projects.prepared_for_*, public.reports and the 'reports' bucket on the real server; the api handler is the REAL code) ----
+let contact = { prepared_for_name: null as string | null, prepared_for_email: null as string | null, address: "1 Test St" as string | null };
+const reports = new Map<string, ReportRow>();
+let transport = fakeTransport();
+let transportFail: string | null = null;
+const sentMail: { to: string; from: string; subject: string; filename: string; isPdf: boolean }[] = [];
+
 let state: ServerState = emptyServerState();
 function seedIssues() {
   for (const k of [...issues.keys()]) issues.delete(k);
@@ -55,6 +64,9 @@ function seedIssues() {
   issuePhotos.set(SEED_PHOTO, { id: SEED_PHOTO, issue_id: SEED_ISSUE, project_id: P, storage_path: SEED_PHOTO_PATH, bytes: seedPhotoBytes.length, checksum_sha256: "b".repeat(64), captured_by: OTHER, captured_at: "2026-11-07T15:01:00Z", confirmed_at: "2026-11-07T15:02:00Z", annotated_from: null, annotations: null });
   objects.set(SEED_PHOTO_PATH, seedPhotoBytes.length); objectBytes.set(SEED_PHOTO_PATH, seedPhotoBytes);
   myRole = "installer";
+  contact = { prepared_for_name: null, prepared_for_email: null, address: "1 Test St" };
+  reports.clear(); sentMail.length = 0; transportFail = null;
+  for (const k of [...objectBytes.keys()]) if (k.startsWith(`${P}/`) && k.endsWith(".pdf") && !k.includes("/issues/")) { objectBytes.delete(k); objects.delete(k); }
 }
 const labelOf = (uid: string | null) => (uid === USER ? LABEL : uid === OTHER ? OTHER_LABEL : null);
 const profile = (uid: string | null) => (uid ? { full_name: labelOf(uid), email: `${uid}@phc.test` } : null);
@@ -93,33 +105,124 @@ function resultFor(it: Def, payload: { actual64?: number; expected64?: number; r
   return "NOT_ENTERED";
 }
 
+function mockReportDb(): ReportDb {
+  const deny = () => { if (!MANAGERS.has(myRole)) throw new ReportError("forbidden", "forbidden"); };
+  return {
+    async getProject() { deny(); return { id: P, name: "Demo Project (mock)", address: contact.address, prepared_for_name: contact.prepared_for_name, prepared_for_email: contact.prepared_for_email }; },
+    async listRooms() { return [{ id: R, name: "Kitchen" }, { id: R2, name: "Bath 1" }]; },
+    async listIssues() { return [...issues.values()].map((i) => ({ id: i.id, room_id: i.room_id, kind: i.kind, title: i.title, description: i.description, trade_name: TRADES.find((x) => x.id === i.trade_id)?.name ?? null, raised_by: i.raised_by, raised_at: i.raised_at, completed_at: i.completed_at, voided_at: i.voided_at })); },
+    async listIssuePhotos() { return [...issuePhotos.values()].map((p) => ({ id: p.id, issue_id: p.issue_id, storage_path: p.storage_path, captured_at: p.captured_at, confirmed_at: p.confirmed_at, annotated_from: p.annotated_from })); },
+    async listProfiles(ids) { return [{ id: USER, full_name: LABEL, email: "installer@phc.test" }, { id: OTHER, full_name: OTHER_LABEL, email: "sam@phc.test" }].filter((p) => ids.includes(p.id)); },
+    async listRoomChecks() { return [...checks.entries()].map(([k, v]) => { const [room_id, item_key] = k.split(":"); return { room_id: room_id!, item_key: item_key!, state: v.state as "done" | "not_done" | "na", note: v.note, checked_by: USER, checked_at: v.checked_at }; }); },
+    async createReport(a) {
+      deny();
+      const r: ReportRow = { id: a.id, project_id: a.projectId, report_type: a.type, storage_path: a.path, file_size: a.bytes, built_at: new Date().toISOString(), status: "built", recipient_name: null, recipient_email: null, queued_at: null, sent_at: null, message_id: null, error: null };
+      reports.set(r.id, r); plog("report_built", { id: r.id, type: a.type, bytes: a.bytes }); return { ...r };
+    },
+    async getReport(id) { deny(); const r = reports.get(id); return r ? { ...r } : null; },
+    async queueReportSend(id, name, email) {
+      deny(); const r = reports.get(id); if (!r) throw new ReportError("forbidden", "forbidden");
+      if (r.status === "sent") throw new ReportError("report_already_sent", "report_already_sent");
+      if (r.status === "queued" && r.queued_at && Date.now() - Date.parse(r.queued_at) < 10 * 60_000) throw new ReportError("report_already_queued", "report_already_queued");
+      Object.assign(r, { status: "queued", queued_at: new Date().toISOString(), recipient_name: name, recipient_email: email, error: null }); return { ...r };
+    },
+    async markReportSent(id, messageId) { const r = reports.get(id)!; Object.assign(r, { status: "sent", sent_at: new Date().toISOString(), message_id: messageId }); },
+    async markReportFailed(id, error) { const r = reports.get(id)!; Object.assign(r, { status: "failed", error }); },
+  };
+}
+function mockReportStorage(): ReportStorage {
+  return {
+    async download(bucket, p) { const b = objectBytes.get(p); return b ? NodeBuffer.from(b) : null; },
+    async upload(bucket, p, bytes) { objectBytes.set(p, bytes); objects.set(p, bytes.length); },
+    async signedUrl(bucket, p) { return `${"http://127.0.0.1:" + PORT}/storage/v1/object/sign/${bucket}/${p}?token=mock`; },
+  };
+}
+
 http.createServer((req, res) => {
   const url = new URL(req.url ?? "/", `http://127.0.0.1:${PORT}`);
   if (req.method === "OPTIONS") { res.writeHead(204, cors); return void res.end(); }
   const chunks: Buffer[] = []; req.on("data", (c) => chunks.push(c));
-  req.on("end", () => {
+  req.on("end", async () => {
     const raw = Buffer.concat(chunks); const body = raw.toString("utf8");
     if (url.pathname === "/__state") return send(res, 200, { log, versions: state.versions });
-    if (url.pathname === "/__control") { const c = JSON.parse(body || "{}"); if (c.dropNextResponses !== undefined) dropNext = c.dropNextResponses; if (c.down !== undefined) down = c.down; if (c.storageDown !== undefined) storageDown = c.storageDown; if (c.hang !== undefined) hang = c.hang; if (c.role !== undefined) myRole = String(c.role); if (c.resetIssues) seedIssues(); if (c.resetChecks) { checks.clear(); state = { ...state, versions: Object.fromEntries(Object.entries(state.versions).filter(([k]) => !k.startsWith("room_check:"))) }; } return send(res, 200, { dropNext, down, storageDown, hang }); }
+    if (url.pathname === "/__control") { const c = JSON.parse(body || "{}"); if (c.dropNextResponses !== undefined) dropNext = c.dropNextResponses; if (c.down !== undefined) down = c.down; if (c.storageDown !== undefined) storageDown = c.storageDown; if (c.hang !== undefined) hang = c.hang; if (c.role !== undefined) myRole = String(c.role); if (c.resetIssues) seedIssues(); if (c.sendFail !== undefined) transportFail = c.sendFail; if (c.stuckQueuedMinutes !== undefined) { for (const r of reports.values()) if (r.status === "queued") r.queued_at = new Date(Date.now() - c.stuckQueuedMinutes * 60_000).toISOString(); } if (c.resetChecks) { checks.clear(); state = { ...state, versions: Object.fromEntries(Object.entries(state.versions).filter(([k]) => !k.startsWith("room_check:"))) }; } return send(res, 200, { dropNext, down, storageDown, hang }); }
     if (url.pathname === "/__photos") return send(res, 200, { photos: [...photos.values()], objects: Object.fromEntries([...objects].filter(([k]) => !k.includes("/issues/"))) }); // audit photos only (issue photos have their own seed)
+    if (url.pathname === "/__sent") return send(res, 200, { sent: sentMail, reports: [...reports.values()], contact });
     if (url.pathname === "/__rows") return send(res, 200, Object.fromEntries(rows));
     if (down) { res.destroy(); return; }
     if (hang) { return; } // accept the connection and never answer: the "Wi-Fi without internet" case
     if (url.pathname === "/auth/v1/logout") { plog("auth_logout", { scope: url.searchParams.get("scope") ?? "global" }); res.writeHead(204, cors); return void res.end(); }
     if (url.pathname === "/auth/v1/authorize") { plog("auth_authorize", { provider: url.searchParams.get("provider") ?? "", redirect_to: url.searchParams.get("redirect_to") ?? "" }); res.writeHead(200, { ...cors, "content-type": "text/html" }); return void res.end("<html><body>mock sign-in</body></html>"); }
-    if (url.pathname.startsWith("/auth/v1/user")) return send(res, 200, { id: USER, aud: "authenticated", email: "installer@phc.test" });
+    if (url.pathname.startsWith("/auth/v1/user")) { if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(res, 401, { code: 401, msg: "invalid JWT" }); return send(res, 200, { id: USER, aud: "authenticated", email: "installer@phc.test" }); }
     if (url.pathname.startsWith("/auth/v1/token")) return send(res, 200, { access_token: TOKEN, token_type: "bearer", expires_in: 3600, refresh_token: "r2", user: { id: USER, email: "installer@phc.test" } });
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(res, 401, { code: "PGRST301", message: "JWT expired" });
 
-    if (url.pathname === "/rest/v1/projects") return send(res, 200, [{ id: P, name: "Demo Project (mock)", customer: "Mock Customer", address: "1 Test St" }]);
+    if (url.pathname === "/rest/v1/projects" && req.method === "PATCH") {
+      const b = JSON.parse(body) as Record<string, string | null>;
+      if (b.prepared_for_email && !isValidEmail(b.prepared_for_email)) return send(res, 400, { code: "23514", message: 'new row for relation "projects" violates check constraint "projects_prepared_for_email_check"' });
+      if (!MANAGERS.has(myRole)) return send(res, 200, []);                                        // row-level security: the update matches no row
+      contact = { prepared_for_name: b.prepared_for_name ?? null, prepared_for_email: b.prepared_for_email ?? null, address: b.address ?? null };
+      plog("project_contact_save", { id: P, ...b });
+      res.writeHead(204, cors); return void res.end();
+    }
+    if (url.pathname === "/rest/v1/projects") {
+      const row = { id: P, name: "Demo Project (mock)", customer: "Mock Customer", address: contact.address, prepared_for_name: contact.prepared_for_name, prepared_for_email: contact.prepared_for_email };
+      return send(res, 200, String(req.headers.accept ?? "").includes("vnd.pgrst.object") ? row : [row]);
+    }
+    if (url.pathname === "/rest/v1/reports" && req.method === "GET") {
+      let list = MANAGERS.has(myRole) ? [...reports.values()].sort((a, b) => b.built_at.localeCompare(a.built_at)) : [];
+      const idf = url.searchParams.get("id"); if (idf?.startsWith("eq.")) list = list.filter((r) => r.id === idf.slice(3));
+      return send(res, 200, String(req.headers.accept ?? "").includes("vnd.pgrst.object") ? (list[0] ?? null) : list);
+    }
+    if (url.pathname.startsWith("/storage/v1/object/sign/reports/") && req.method === "POST") {
+      const objPath = decodeURIComponent(url.pathname.slice("/storage/v1/object/sign/reports/".length));
+      plog("report_preview_link", { id: objPath });
+      return send(res, 200, { signedURL: `/object/sign/reports/${objPath}?token=mock` });
+    }
+    if (url.pathname.startsWith("/storage/v1/object/sign/reports/") && req.method === "GET") {
+      const bytes = objectBytes.get(decodeURIComponent(url.pathname.slice("/storage/v1/object/sign/reports/".length)));
+      if (!bytes) return send(res, 404, { message: "not found" });
+      res.writeHead(200, { ...cors, "content-type": "application/pdf" }); return void res.end(bytes);
+    }
+    const rpc = /^\/rest\/v1\/rpc\/(create_report|queue_report_send|mark_report_sent|mark_report_failed)$/.exec(url.pathname);
+    if (rpc && req.method === "POST") {                                   // the real functions' names and parameters (migration 1700)
+      const b = JSON.parse(body || "{}") as Record<string, never>; const db = mockReportDb();
+      try {
+        if (rpc[1] === "create_report") return send(res, 200, await db.createReport({ id: b.p_id, projectId: b.p_project, type: b.p_type, path: b.p_path, bytes: b.p_bytes }));
+        if (rpc[1] === "queue_report_send") return send(res, 200, await db.queueReportSend(b.p_report_id, b.p_recipient_name ?? null, b.p_recipient_email));
+        if (rpc[1] === "mark_report_sent") { await db.markReportSent(b.p_report_id, b.p_message_id); return send(res, 200, null); }
+        await db.markReportFailed(b.p_report_id, b.p_error); return send(res, 200, null);
+      } catch (e) { return send(res, 400, { code: "P0001", message: e instanceof Error ? e.message : "error" }); }
+    }
+    if (url.pathname === "/api/reports") {
+      let parsed: unknown = null; try { parsed = JSON.parse(body || "null"); } catch { parsed = null; }
+      const out = await handleReportsRequest({ method: req.method ?? "", authorization: req.headers.authorization, body: parsed }, {
+        getUser: async (tok) => (tok === TOKEN ? { id: USER, email: "installer@phc.test" } : null),
+        makeDeps: () => ({ db: mockReportDb(), storage: mockReportStorage() }),
+        transport: () => ({ async send(m) {
+          if (transportFail) throw new Error(transportFail);
+          const r = await transport.send(m);
+          sentMail.push({ to: m.to, from: m.from, subject: m.subject, filename: m.attachment.filename, isPdf: m.attachment.content.subarray(0, 5).toString() === "%PDF-" });
+          return r;
+        } }),
+        env: { REPORT_FROM: "Test Reports <reports@example.test>", REPORT_TIMEZONE: "America/Phoenix" },
+      });
+      return send(res, out.status, out.json);
+    }
     if (url.pathname === "/rest/v1/rooms") return send(res, 200, [
       { id: R, project_id: P, name: "Kitchen", floor: null, details_source: "cockpit", details: { panelName: "Slab", woodSpecies: "Pre Finished", finishName: "Uniboard K15 Cannes Riviera Oak", edgebanding: "To Match", crownProfile: "Flat Crown", toeKickStyle: "TBD", sheen: "Pre Finished" } },
       { id: R2, project_id: P, name: "Bath 1", floor: null, details_source: "masterfile", details: { panelName: "Slab", woodSpecies: "Pre Finished", finishName: "UNIBOARD - K16 Esterel Riviera Oak", edgebanding: "To Match" } },
     ]);
-    if (url.pathname === "/rest/v1/room_checks") return send(res, 200, [...checks.entries()].map(([k, v]) => { const [room_id, item_key] = k.split(":"); return { room_id, item_key, project_id: P, state: v.state, note: v.note, checked_at: v.checked_at, row_version: v.row_version, by: { full_name: LABEL, email: "installer@phc.test" } }; }));
+    if (url.pathname === "/rest/v1/room_checks") return send(res, 200, [...checks.entries()].map(([k, v]) => { const [room_id, item_key] = k.split(":"); return { room_id, item_key, project_id: P, state: v.state, note: v.note, checked_by: USER, checked_at: v.checked_at, row_version: v.row_version, by: { full_name: LABEL, email: "installer@phc.test" } }; }));
     if (url.pathname === "/rest/v1/trades") return send(res, 200, TRADES);
     if (url.pathname === "/rest/v1/project_members") return send(res, 200, [{ project_id: P, role: myRole }]);
-    if (url.pathname === "/rest/v1/profiles") return send(res, 200, [{ is_admin: false }]);
+    if (url.pathname === "/rest/v1/profiles") {
+      const all = [{ id: USER, full_name: LABEL, email: "installer@phc.test", is_admin: false }, { id: OTHER, full_name: OTHER_LABEL, email: "sam@phc.test", is_admin: false }];
+      const f = url.searchParams.get("id"); let list = all;
+      if (f?.startsWith("eq.")) list = all.filter((p) => p.id === f.slice(3));
+      else if (f?.startsWith("in.(")) { const ids = f.slice(4, -1).split(",").map((s) => s.replace(/"/g, "")); list = all.filter((p) => ids.includes(p.id)); }
+      return send(res, 200, String(req.headers.accept ?? "").includes("vnd.pgrst.object") ? (list[0] ?? null) : list);
+    }
     if (url.pathname === "/rest/v1/room_issues" && req.method === "GET") {
       return send(res, 200, [...issues.values()].map((r) => ({ ...r, raised_p: profile(r.raised_by), completed_p: profile(r.completed_by), voided_p: profile(r.voided_by) })));
     }
@@ -154,7 +257,7 @@ http.createServer((req, res) => {
       plog("photo_register", { id: row.id, item_key: row.item_key, annotated_from: row.annotated_from ?? null, shapes: row.annotations ? row.annotations.length : 0 });
       res.writeHead(201, cors); return void res.end();
     }
-    const storageMatch = /^\/storage\/v1\/object\/(audit-photos|issue-photos)\/(.*)$/.exec(url.pathname);
+    const storageMatch = /^\/storage\/v1\/object\/(audit-photos|issue-photos|reports)\/(.*)$/.exec(url.pathname);
     if (storageMatch && req.method === "GET") {
       const objPath = decodeURIComponent(storageMatch[2]!);
       const bytes = objectBytes.get(objPath);

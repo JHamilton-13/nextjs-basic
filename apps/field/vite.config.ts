@@ -26,7 +26,7 @@ export default defineConfig({
         globPatterns: ["**/*.{js,css,html,svg,png,webmanifest}"],
         navigateFallback: "/index.html",
         // Never cache or intercept Supabase API traffic: data goes through our own IndexedDB cache + outbox.
-        navigateFallbackDenylist: [/^\/auth\//, /^\/rest\//]
+        navigateFallbackDenylist: [/^\/auth\//, /^\/rest\//, /^\/api\//]
       }
     })
   ],

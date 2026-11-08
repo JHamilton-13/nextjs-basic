@@ -10,3 +10,4 @@ export * from "./reports/builderAudit";
 export * from "./reports/roomStatus";
 export * from "./reports/email";
 export { ISSUE_KINDS_BY_CATEGORY, issueSaveBlockers, canChangeIssue, canCompleteIssue } from "./issues";
+export * from "./reports/roomChecklist";

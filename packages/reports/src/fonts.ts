@@ -1,13 +1,24 @@
 import { Font } from "@react-pdf/renderer";
-import { fileURLToPath } from "node:url";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { FONT_FAMILY } from "./tokens";
 
-const dir = (f: string) => fileURLToPath(new URL(`../assets/fonts/${f}`, import.meta.url));
+/**
+ * Where the fonts and logo live. Found from the working directory (works in tests, the sample script and a Vercel function, where the
+ * assets are shipped with the function by `includeFiles`), so no module-system specific path tricks are needed. REPORT_ASSETS_DIR overrides.
+ */
+function assetsDir(): string {
+  const cwd = process.cwd();
+  const candidates = [process.env.REPORT_ASSETS_DIR, join(cwd, "assets"), join(cwd, "packages/reports/assets"), join(cwd, "../../packages/reports/assets"), join(cwd, "../reports/assets")];
+  for (const c of candidates) if (c && existsSync(join(c, "fonts", "Geist-Regular.ttf"))) return c;
+  return join(cwd, "packages/reports/assets");
+}
+const dir = assetsDir();
 export const FONT_FILES = {
-  regular: dir("Geist-Regular.ttf"),
-  semibold: dir("Geist-SemiBold.ttf"),
+  regular: join(dir, "fonts", "Geist-Regular.ttf"),
+  semibold: join(dir, "fonts", "Geist-SemiBold.ttf"),
 } as const;
-export const LOGO_FILE = fileURLToPath(new URL("../assets/PHC_LOGO.png", import.meta.url));
+export const LOGO_FILE = join(dir, "PHC_LOGO.png");
 
 let done = false;
 export function registerFonts(): void {

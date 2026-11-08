@@ -13,9 +13,10 @@ import { ProjectView } from "./ui/ProjectView";
 import { StartAudit } from "./ui/StartAudit";
 import { AuditView } from "./ui/AuditView";
 import { Queue } from "./ui/Queue";
+import { Reports } from "./ui/Reports";
 import { StatusBar } from "./ui/StatusBar";
 
-export type View = { name: "projects" } | { name: "project"; projectId: string } | { name: "start"; projectId: string } | { name: "audit"; auditId: string } | { name: "queue" };
+export type View = { name: "projects" } | { name: "project"; projectId: string } | { name: "start"; projectId: string } | { name: "audit"; auditId: string } | { name: "queue" } | { name: "reports"; projectId: string };
 
 export interface AppCtx {
   db: Db; outbox: Outbox; identity: Identity; tick: number; online: boolean; syncing: boolean; hasSession: boolean;
@@ -99,9 +100,10 @@ export function App() {
         {view.name === "start" && <StartAudit ctx={ctx} projectId={view.projectId} />}
         {view.name === "audit" && <AuditView ctx={ctx} auditId={view.auditId} />}
         {view.name === "queue" && <Queue ctx={ctx} />}
+        {view.name === "reports" && <Reports ctx={ctx} projectId={view.projectId} />}
       </main>
       <nav className="tabs">
-        <button className={view.name === "projects" || view.name === "project" || view.name === "start" || view.name === "audit" ? "active" : ""} onClick={() => setView({ name: "projects" })}>Projects</button>
+        <button className={view.name === "projects" || view.name === "project" || view.name === "start" || view.name === "audit" || view.name === "reports" ? "active" : ""} onClick={() => setView({ name: "projects" })}>Projects</button>
         <button className={view.name === "queue" ? "active" : ""} onClick={() => setView({ name: "queue" })}>Sync queue</button>
       </nav>
     </div>

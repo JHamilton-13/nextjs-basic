@@ -65,6 +65,9 @@ Last updated: 2026-11-08
 ## Step 10: report documents (sample PDFs ready for review)
 `packages/reports` builds the Builder Site Audit and Room Status PDFs from fake data; 30 tests pass. Samples: `docs/testing/images/builder-audit-sample.pdf` and PNGs. Awaiting owner comparison with the Fulton layout before report building and sending (Step 5). See `docs/testing/step10-report-documents-results.md`.
 
+## Step 11: manager screens, report build and send (built and tested; MIGRATION 1700 NOT APPLIED)
+Reports screen in `apps/field` (managers only), server function `api/reports.mjs`, migration 1700 written and tested locally. Awaiting owner approval of the SQL before it is applied. Owner actions: Vercel settings (`REPORT_FROM`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, optional `REPORT_TIMEZONE`), see `docs/ops/gmail-send-setup.md`. See `docs/testing/step11-manager-reports-results.md`.
+
 ## Technical debt / notes
 - Decimal-inch and mm inputs round to nearest 1/64"; fraction denominators limited to 2..64 (powers of two).
 - Concurrency tested for `apply_op` only; no load testing; no tests of `service_role` paths.

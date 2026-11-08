@@ -34,4 +34,16 @@ applied=$(echo "$res" | grep -c '^applied$' || true); conf=$(echo "$res" | grep 
 meas=$(q -c "select count(*) from public.measurements where audit_id = test.u(901) and item_key = 'ceiling_height'")
 echo "different opIds, same base x10: applied=$applied conflict=$conf measurements=$meas"
 [ "$applied" = 1 ] && [ "$conf" = 9 ] && [ "$meas" = 1 ] || { echo "FAILED: concurrent writes from a stale base"; exit 1; }
-echo "ok - concurrency: replay of one opId applies once; stale-base writers conflict (2 scenarios)"
+
+# C) 10 managers/double-clicks queue the SAME report at the same instant -> exactly one claims the send, the rest get report_already_queued.
+q -c "insert into public.reports (id, project_id, report_type, storage_path, file_size, built_by) values (test.u(9501), test.u(101), 'builder_site_audit', test.u(101) || '/' || test.u(9501) || '.pdf', 100, test.u(2))" >/dev/null
+PM1=$(q -c "select test.u(2)")
+as_pm1() {
+  q -c "set role authenticated; select set_config('request.jwt.claim.sub', '$PM1', false); select pg_advisory_lock_shared(777)::text; select (public.queue_report_send(test.u(9501), 'B', 'b@example.test')).status" 2>&1 | grep -E "^queued$|report_already_queued" | head -1
+}
+open_gate
+res=$(for i in $(seq 1 10); do as_pm1 & done; wait)
+claimed=$(echo "$res" | grep -c '^queued$' || true); held=$(echo "$res" | grep -c 'report_already_queued' || true)
+echo "queue same report x10: claimed=$claimed already_queued=$held"
+[ "$claimed" = 1 ] && [ "$held" = 9 ] || { echo "FAILED: concurrent queue of one report"; exit 1; }
+echo "ok - concurrency: replay of one opId applies once; stale-base writers conflict; one report queues once (3 scenarios)"

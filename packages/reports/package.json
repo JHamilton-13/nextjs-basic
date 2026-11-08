@@ -8,11 +8,15 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "sample": "tsx scripts/sample.tsx"
+    "sample": "tsx scripts/sample.tsx",
+    "build:api": "node scripts/build-api.mjs"
   },
   "devDependencies": {
+    "@supabase/supabase-js": "^2",
     "@types/node": "^20.19.43",
+    "@types/nodemailer": "^6.4.24",
     "@types/react": "^18.3.31",
+    "esbuild": "^0.25.12",
     "pdf-parse": "^1.1.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
@@ -21,6 +25,7 @@
   "dependencies": {
     "@phc/domain": "*",
     "@react-pdf/renderer": "^4.9.0",
+    "nodemailer": "^6.10.1",
     "react": "^18.3.1",
     "sharp": "^0.35.5"
   }

@@ -105,6 +105,7 @@ async function waitFor(fn, what, ms = 15000) { const t = Date.now(); for (;;) { 
     check(await page.getByTestId("resign").isVisible(), "session gone: the header offers a real 'Sign in again to sync' button");
     const [authReq] = await Promise.all([page.waitForRequest((r) => r.url().includes("/auth/v1/authorize")), page.getByTestId("resign").tap()]);
     check(authReq.url().includes("provider=google") && authReq.url().includes(encodeURIComponent(APP)), "tapping it starts Google sign-in and returns to this app");
+    await page.waitForURL(/\/auth\/v1\/authorize/);                       // let the redirect finish before navigating back (otherwise the two navigations race)
     await page.goto(APP);
     await page.getByTestId("project-card").waitFor();
     await page.getByTestId("signout").tap();
