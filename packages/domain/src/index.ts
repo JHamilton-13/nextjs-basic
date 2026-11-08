@@ -5,3 +5,7 @@ export * from "./evidence";
 export * from "./roles";
 export * from "./readiness";
 export * from "./sync";
+export * from "./reports/categories";
+export * from "./reports/builderAudit";
+export * from "./reports/roomStatus";
+export * from "./reports/email";
