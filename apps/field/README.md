@@ -13,9 +13,12 @@ service worker via `vite-plugin-pwa`; Supabase Auth + the `apply_op` RPC for syn
 - Photos: camera capture, JPEG compression (2048 px, quality 0.8), SHA-256, durable register -> upload -> confirm queue; the original stays on the phone until the upload is confirmed.
 - Critical MEP FAIL flags the audit NOT READY at once. Submit shows warnings (items with no result, critical items never checked) but is never blocked; after submit the audit is read-only here.
 - Readiness comes from the server once the submit has synced; until then it is computed on the device with the same rules.
+- Revise a submitted audit (offline): starts version n+1 with results carried over; version n stays as the read-only record; version tabs switch between them.
+- Photo mark-up: pen, highlighter, text. Marks are editable vector data; saving creates a marked-up COPY, the original is never changed.
+- Who/when: every result shows who recorded it and when; a failed/review item shows who raised the issue and when; the audit shows who started and submitted it. Photos carry no timestamp.
 
 ## Not built yet
-Revising a submitted audit, manager release/override screens (dashboard), photo annotation, drawings, conflict resolution UI, an in-app
+Manager release/override screens (dashboard), more annotation tools, drawings, conflict resolution UI, an in-app
 notification inbox, supervisor approval, background sync (iOS has none: the queue drains when the app is opened/foregrounded), push notifications.
 
 ## Run

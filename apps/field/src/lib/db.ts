@@ -6,7 +6,7 @@ interface PhcDB extends DBSchema {
   projects: { key: string; value: ProjectRow };
   rooms: { key: string; value: RoomRow; indexes: { by_project: string } };
   templates: { key: string; value: TemplateRow };
-  audits: { key: string; value: LocalAudit };
+  audits: { key: string; value: LocalAudit; indexes: { by_audit_id: string } };
   items: { key: string; value: LocalItem; indexes: { by_audit: string } };
   photos: { key: string; value: LocalPhoto; indexes: { by_audit: string } };
   outbox: { key: number; value: OutboxRecord; indexes: { by_audit: string } };
@@ -16,18 +16,33 @@ export type Db = IDBPDatabase<PhcDB>;
 
 /** Durable local store. Every write the user makes lands here (and in `outbox`) before any network call. */
 export function openPhcDb(name = "phc-field"): Promise<Db> {
-  return openDB<PhcDB>(name, 2, {
-    upgrade(db, oldVersion) {
+  return openDB<PhcDB>(name, 3, {
+    async upgrade(db, oldVersion, _newVersion, tx) {
       if (oldVersion < 1) {
         db.createObjectStore("meta");
         db.createObjectStore("projects", { keyPath: "id" });
         db.createObjectStore("rooms", { keyPath: "id" }).createIndex("by_project", "project_id");
         db.createObjectStore("templates", { keyPath: "id" });
-        db.createObjectStore("audits", { keyPath: "auditId" });
-        db.createObjectStore("items", { keyPath: "key" }).createIndex("by_audit", "auditId");
         db.createObjectStore("outbox", { keyPath: "seq", autoIncrement: true }).createIndex("by_audit", "auditId");
       }
-      if (oldVersion < 2) db.createObjectStore("photos", { keyPath: "id" }).createIndex("by_audit", "auditId");
+      // (v2 added the photos store; v3 recreates audits/items/photos below, so a fresh install creates them only once, there.)
+      if (oldVersion < 3) {
+        // v3: audits, items and photos become version-aware. Existing local data (all version 1) is carried over in place
+        // so unsynced work on a device survives the upgrade; the outbox is not touched.
+        const oldAudits: any[] = oldVersion >= 1 ? await tx.objectStore("audits" as never).getAll() : [];
+        const oldItems: any[] = oldVersion >= 1 ? await tx.objectStore("items" as never).getAll() : [];
+        const oldPhotos: any[] = oldVersion >= 2 ? await tx.objectStore("photos").getAll() : [];
+        if (oldVersion >= 1) { db.deleteObjectStore("audits" as never); db.deleteObjectStore("items" as never); }
+        if (oldVersion >= 2) db.deleteObjectStore("photos");
+        const audits = db.createObjectStore("audits", { keyPath: "key" });
+        audits.createIndex("by_audit_id", "auditId");
+        const items = db.createObjectStore("items", { keyPath: "key" });
+        items.createIndex("by_audit", "auditKey");
+        db.createObjectStore("photos", { keyPath: "id" }).createIndex("by_audit", "auditId");
+        for (const a of oldAudits) audits.put({ createdByLabel: "", ...a, key: `${a.auditId}:1`, version: 1 });
+        for (const i of oldItems) items.put({ ...i, version: 1, auditKey: `${i.auditId}:1` });
+        for (const p of oldPhotos) tx.objectStore("photos").put({ ...p, version: 1 });
+      }
     }
   });
 }

@@ -16,3 +16,23 @@ export const browserCompress: Compressor = async (file) => {
   bmp.close();
   return { blob, thumb, mime: "image/jpeg", original: file };
 };
+
+import { drawShapes, type Shape } from "./annotations";
+
+/** Draws the marks onto the image at its own resolution (long edge capped at 2048 px) and encodes the flattened JPEG for reports. */
+export async function flattenAnnotated(base: Blob, shapes: Shape[]): Promise<{ blob: Blob; thumb: string; mime: string }> {
+  const bmp = await createImageBitmap(base);
+  const scale = Math.min(1, MAX_EDGE / Math.max(bmp.width, bmp.height));
+  const w = Math.max(1, Math.round(bmp.width * scale)); const h = Math.max(1, Math.round(bmp.height * scale));
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const g = c.getContext("2d")!;
+  g.drawImage(bmp, 0, 0, w, h);
+  drawShapes(g, shapes, w, h);
+  const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/jpeg", 0.85));
+  if (!blob) throw new Error("JPEG encoding failed");
+  const ts = Math.min(1, 160 / Math.max(w, h));
+  const t = document.createElement("canvas"); t.width = Math.max(1, Math.round(w * ts)); t.height = Math.max(1, Math.round(h * ts));
+  t.getContext("2d")!.drawImage(c, 0, 0, t.width, t.height);
+  bmp.close();
+  return { blob, thumb: t.toDataURL("image/jpeg", 0.6), mime: "image/jpeg" };
+}

@@ -25,7 +25,7 @@ const A = "00000000-0000-4000-8000-000000000301";
 
 let db: Db; let ob: Outbox; let n = 0; let seq = 0;
 const ids = () => `00000000-0000-4000-8000-${String(7000 + ++seq).padStart(12, "0")}`;
-const ctx = () => ({ db, outbox: ob, userId: "u1", newId: ids, now: () => "2026-11-08T10:00:00.000Z" });
+const ctx = () => ({ db, outbox: ob, userId: "u1", userLabel: "Pat Installer", newId: ids, now: () => "2026-11-08T10:00:00.000Z" });
 const compress: Compressor = async (file) => ({ blob: new Blob([new Uint8Array(500)], { type: "image/jpeg" }), thumb: "data:image/jpeg;base64,AAAA", mime: "image/jpeg", original: file });
 const pctx = () => ({ ...ctx(), compress });
 const jpg = () => new Blob([new Uint8Array(2000)], { type: "image/jpeg" });
@@ -71,6 +71,7 @@ describe("addPhoto (offline)", () => {
   it("finalizeConfirmedPhotos drops the heavy blobs only after the confirm op is confirmed", async () => {
     const r = await addPhoto(pctx(), { auditId: A, itemKey: "outlets", file: jpg() });
     if (!r.ok) throw new Error("setup");
+    await submitAudit(ctx(), { auditId: A });                                  // blobs are only dropped once the version is submitted
     expect(await finalizeConfirmedPhotos(db, ob)).toBe(0);                  // nothing confirmed yet: nothing removed
     expect((await db.get("photos", r.value.id))?.blob).toBeDefined();
     const q = (await ob.list()).filter((x) => x.op.entity === "photo");
@@ -80,6 +81,17 @@ describe("addPhoto (offline)", () => {
     const after = await db.get("photos", r.value.id);
     expect(after).toMatchObject({ confirmed: true, thumb: "data:image/jpeg;base64,AAAA" });
     expect(after?.blob).toBeUndefined(); expect(after?.originalBlob).toBeUndefined();
+  });
+});
+
+describe("finalizeConfirmedPhotos keeps images while the audit is still being worked on", () => {
+  it("a confirmed photo on an UNSUBMITTED audit keeps its blobs (it may still be annotated offline)", async () => {
+    const r = await addPhoto(pctx(), { auditId: A, itemKey: "outlets", file: jpg() });
+    if (!r.ok) throw new Error("setup");
+    const confirmRec = (await ob.list()).filter((x) => x.op.entity === "photo")[2]!;
+    await db.put("outbox", { ...confirmRec, state: { ...confirmRec.state, status: "confirmed" } });
+    expect(await finalizeConfirmedPhotos(db, ob)).toBe(0);
+    expect((await db.get("photos", r.value.id))?.blob).toBeDefined();
   });
 });
 
@@ -139,7 +151,7 @@ describe("submitAudit and readiness (owner decisions: no result gating; managers
     expect(r.ok).toBe(true);
     const op = (await ob.list()).find((x) => x.op.entity === "audit" && x.op.payload.action === "submit")!.op;
     expect(op).toMatchObject({ entityId: `${A}:1`, baseVersion: 1, actor: "u1" });
-    expect((await db.get("audits", A))?.submittedAt).toBe("2026-11-08T10:00:00.000Z");
+    expect((await db.get("audits", `${A}:1`))?.submittedAt).toBe("2026-11-08T10:00:00.000Z");
     expect(await submitAudit(ctx(), { auditId: A })).toMatchObject({ ok: false, error: { code: "already_submitted" } });
   });
   it("after submit, results and measurements are refused (server would too) but late photos are allowed", async () => {
@@ -167,7 +179,7 @@ describe("submitAudit and readiness (owner decisions: no result gating; managers
   });
   it("a server-reported state takes precedence over the local preview", async () => {
     await submitAudit(ctx(), { auditId: A });
-    const a = (await db.get("audits", A))!;
+    const a = (await db.get("audits", `${A}:1`))!;
     await db.put("audits", { ...a, serverState: "released_for_installation" });
     expect((await auditReadiness(db, A)).state).toBe("released_for_installation");
   });

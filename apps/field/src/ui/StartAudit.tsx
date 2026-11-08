@@ -18,7 +18,7 @@ export function StartAudit({ ctx, projectId }: { ctx: AppCtx; projectId: string 
   async function start() {
     const auditId = crypto.randomUUID();
     const r = await startAudit(
-      { db: ctx.db, outbox: ctx.outbox, userId: ctx.identity.userId, newId: () => crypto.randomUUID(), now: () => new Date().toISOString() },
+      { db: ctx.db, outbox: ctx.outbox, userId: ctx.identity.userId, userLabel: ctx.identity.label, newId: () => crypto.randomUUID(), now: () => new Date().toISOString() },
       { auditId, projectId, roomId: roomId || null, templateId: tpl },
     );
     if (!r.ok) setError(r.error.message); else { ctx.go({ name: "audit", auditId }); void ctx.sync(); }

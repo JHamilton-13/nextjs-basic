@@ -19,13 +19,21 @@ export interface TemplateConfig {
 export interface TemplateRow { id: string; name: string; version: number; config: TemplateConfig }
 
 export interface LocalAudit {
+  /** `${auditId}:${version}` — one local record per audit VERSION (a revision is a new version). */
+  key: string;
   auditId: string;
-  version: 1;
+  version: number;
   projectId: string;
   roomId: string | null;
   templateId: string;
   createdBy: string;
+  /** Display name (or email) of the creator, captured when it happened. */
+  createdByLabel: string;
   createdAt: string;
+  /** Version 2+: why the audit was revised. */
+  reviseReason?: string;
+  submittedBy?: string;
+  submittedByLabel?: string;
   /** Set locally when the installer submits; the audit is then read-only on this device (the server enforces it too). */
   submittedAt?: string;
   /** Readiness as reported by the server after the submit synced (authoritative). */
@@ -38,6 +46,9 @@ export interface LocalItem {
   /** `${auditId}:${version}:${itemKey}` — also the apply_op entityId. */
   key: string;
   auditId: string;
+  version: number;
+  /** `${auditId}:${version}` */
+  auditKey: string;
   itemKey: string;
   sectionKey: string;
   sectionTitle: string;
@@ -57,11 +68,23 @@ export interface LocalItem {
   deviation64?: number;
   drawingRef?: string;
   note?: string;
+  /** Who recorded the current result and when it happened on site (not when it synced). */
+  resultBy?: string;
+  resultAt?: string;
+  /** Who first raised the issue (a FAIL or REVIEW) and when; cleared when the item stops being an issue. */
+  issueBy?: string;
+  issueAt?: string;
 }
 
 export interface LocalPhoto {
   id: string;
   auditId: string;
+  /** Audit version current when the photo was taken. Photos count as evidence for that version and every later one. */
+  version: number;
+  /** Set when this is an annotated copy: the original photo it was drawn on (the original is never changed). */
+  annotatedFrom?: string;
+  /** Editable vector marks of an annotated copy (normalized 0..1 coordinates). */
+  annotations?: import("./annotations").Shape[];
   projectId: string;
   /** null = an overall/room photo not tied to one checklist item. */
   itemKey: string | null;
@@ -93,4 +116,4 @@ export interface OutboxRecord {
   nextAttemptAt: number;
 }
 
-export interface Identity { userId: string; email: string }
+export interface Identity { userId: string; email: string; /** display name, else email */ label: string }

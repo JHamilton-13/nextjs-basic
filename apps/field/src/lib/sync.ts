@@ -18,17 +18,32 @@ export async function pullCache(sb: SupabaseClient, db: Db): Promise<void> {
   await replaceCache(db, { projects: (p.data ?? []) as ProjectRow[], rooms: (r.data ?? []) as RoomRow[], templates: (t.data ?? []) as TemplateRow[] });
 }
 
-/** After a drain: for audits with nothing left in the queue, replace provisional results with the server's. */
+/** Label for an embedded profile row: name, else email. */
+const labelOf = (p: unknown): string | null => {
+  const x = (Array.isArray(p) ? p[0] : p) as { full_name?: string | null; email?: string | null } | null | undefined;
+  return x?.full_name?.trim() || x?.email || null;
+};
+
+/** After a drain: for each audit VERSION with nothing left in the queue, replace provisional results with the server's. */
 export async function pullAuditResults(sb: SupabaseClient, db: Db, outbox: Outbox): Promise<void> {
   const queue = await outbox.list();
   for (const audit of await db.getAll("audits")) {
     const mine = queue.filter((q) => q.auditId === audit.auditId);
-    const created = mine.some((q) => q.op.entity === "audit" && q.state.status === "confirmed");
-    if (!created) continue; // the audit does not exist on the server yet
-    const hasPendingOps = mine.some((q) => q.state.status !== "confirmed");
-    if (hasPendingOps) continue;
-    const { data, error } = await sb.from("audit_items").select("item_key,result,row_version").eq("audit_id", audit.auditId).eq("version", 1);
-    if (!error && data) await reconcileFromServer(db, audit.auditId, data as ServerItemRow[], { hasPendingOps: false });
+    const created = mine.some((q) => q.op.entity === "audit" && q.op.entityId === audit.key && (q.op.payload.action === "create" || q.op.payload.action === "revise") && q.state.status === "confirmed");
+    if (!created) continue; // this version does not exist on the server yet
+    // pending work in this audit (this or an earlier version) could still change the server's rows: wait until it is confirmed
+    if (mine.some((q) => q.state.status !== "confirmed")) continue;
+    const full = "item_key,result,row_version,result_at,issue_raised_at,result_by_profile:profiles!audit_items_result_by_fkey(full_name,email),issue_by_profile:profiles!audit_items_issue_raised_by_fkey(full_name,email)";
+    let res: { data: unknown; error: unknown } = await sb.from("audit_items").select(full).eq("audit_id", audit.auditId).eq("version", audit.version);
+    // a database that predates attribution columns: fall back to the basic columns
+    if (res.error) res = await sb.from("audit_items").select("item_key,result,row_version").eq("audit_id", audit.auditId).eq("version", audit.version);
+    if (res.error || !res.data) continue;
+    const rows: ServerItemRow[] = (res.data as unknown as Record<string, unknown>[]).map((r) => ({
+      item_key: String(r.item_key), result: String(r.result), row_version: Number(r.row_version),
+      result_at: (r.result_at as string | null | undefined) ?? null, issue_raised_at: (r.issue_raised_at as string | null | undefined) ?? null,
+      result_by_label: labelOf(r.result_by_profile), issue_raised_by_label: labelOf(r.issue_by_profile),
+    }));
+    await reconcileFromServer(db, audit.auditId, audit.version, rows, { hasPendingOps: false });
   }
 }
 
@@ -37,9 +52,9 @@ export async function pullAuditStates(sb: SupabaseClient, db: Db, outbox: Outbox
   const queue = await outbox.list();
   for (const audit of await db.getAll("audits")) {
     if (!audit.submittedAt) continue;
-    const submitted = queue.some((q) => q.auditId === audit.auditId && q.op.entity === "audit" && q.op.payload.action === "submit" && q.state.status === "confirmed");
+    const submitted = queue.some((q) => q.auditId === audit.auditId && q.op.entity === "audit" && q.op.entityId === audit.key && q.op.payload.action === "submit" && q.state.status === "confirmed");
     if (!submitted) continue;
-    const { data, error } = await sb.rpc("audit_state", { p_audit_id: audit.auditId, p_version: 1 });
+    const { data, error } = await sb.rpc("audit_state", { p_audit_id: audit.auditId, p_version: audit.version });
     if (!error && typeof data === "string" && data !== audit.serverState) await db.put("audits", { ...audit, serverState: data });
   }
 }

@@ -35,12 +35,14 @@ export function supabaseTransport(sb: SupabaseClient, db: Db): Transport {
   }
 
   async function photo(op: OperationEnvelope): Promise<OperationResult> {
-    const p = op.payload as { action: string; projectId: string; auditId: string; itemKey: string | null; storagePath: string; sha256: string; bytes: number; capturedAt: string; mime?: string };
+    const p = op.payload as { action: string; projectId: string; auditId: string; version?: number; annotatedFrom?: string; annotations?: unknown; itemKey: string | null; storagePath: string; sha256: string; bytes: number; capturedAt: string; mime?: string };
     try {
       if (p.action === "register") {
         const { error, status } = await sb.from("photos").insert({
-          id: op.entityId, project_id: p.projectId, audit_id: p.auditId, version: 1, item_key: p.itemKey, storage_path: p.storagePath,
+          id: op.entityId, project_id: p.projectId, audit_id: p.auditId, version: p.version ?? 1, item_key: p.itemKey, storage_path: p.storagePath,
           checksum_sha256: p.sha256, bytes: p.bytes, captured_by: op.actor, captured_at: p.capturedAt,
+          // only sent for annotated copies, so ordinary photos keep working on a database that predates annotations
+          ...(p.annotatedFrom ? { annotated_from: p.annotatedFrom, annotations: p.annotations } : {}),
         });
         if (error && error.code !== "23505") throw classify({ code: error.code, message: error.message, status }); // 23505 = already registered (a retry)
         return APPLIED;

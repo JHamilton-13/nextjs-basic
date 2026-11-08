@@ -23,7 +23,7 @@ const A = "00000000-0000-4000-8000-000000000301";
 
 let db: Db; let ob: Outbox; let n = 0; let seq = 0;
 const ids = () => `00000000-0000-4000-8000-${String(9000 + ++seq).padStart(12, "0")}`;
-const ctx = () => ({ db, outbox: ob, userId: "u1", newId: ids, now: () => "2026-11-08T10:00:00.000Z" });
+const ctx = () => ({ db, outbox: ob, userId: "u1", userLabel: "Pat Installer", newId: ids, now: () => "2026-11-08T10:00:00.000Z" });
 
 beforeEach(async () => {
   db = await openPhcDb(`audits-${++n}`);
@@ -35,8 +35,8 @@ describe("startAudit (works fully offline)", () => {
   it("creates the audit and its items locally and queues exactly one create op", async () => {
     const r = await startAudit(ctx(), { auditId: A, projectId: P, roomId: R, templateId: T });
     expect(r.ok).toBe(true);
-    expect((await db.get("audits", A))).toMatchObject({ auditId: A, version: 1, projectId: P, roomId: R, templateId: T, createdBy: "u1" });
-    const items = await db.getAllFromIndex("items", "by_audit", A);
+    expect((await db.get("audits", `${A}:1`))).toMatchObject({ key: `${A}:1`, auditId: A, version: 1, projectId: P, roomId: R, templateId: T, createdBy: "u1", createdByLabel: "Pat Installer" });
+    const items = await db.getAllFromIndex("items", "by_audit", `${A}:1`);
     expect(items.map((i) => i.itemKey).sort()).toEqual(["access", "outlets", "wall_length", "wall_plumb"]);
     expect(items.find((i) => i.itemKey === "outlets")).toMatchObject({ critical: true, kind: "check", result: "NOT_ENTERED", nextBase: 0, pending: false });
     const q = await ob.list();
@@ -106,10 +106,10 @@ describe("reconcileFromServer (server result is authoritative once confirmed)", 
     await startAudit(ctx(), { auditId: A, projectId: P, roomId: R, templateId: T });
     await recordMeasurement(ctx(), { auditId: A, itemKey: "wall_length", expected: '120"', actual: '120 3/4"', drawingRef: "x" });
     const rows = [{ item_key: "wall_length", result: "REVIEW", row_version: 1 }];
-    await reconcileFromServer(db, A, rows, { hasPendingOps: true });
+    await reconcileFromServer(db, A, 1, rows, { hasPendingOps: true });
     expect((await db.get("items", `${A}:1:wall_length`))?.result).toBe("REVIEW"); // provisional (computed locally: 48/64 over -> REVIEW)
     expect((await db.get("items", `${A}:1:wall_length`))?.pending).toBe(true);
-    await reconcileFromServer(db, A, [{ item_key: "wall_length", result: "PASS", row_version: 1 }], { hasPendingOps: false });
+    await reconcileFromServer(db, A, 1, [{ item_key: "wall_length", result: "PASS", row_version: 1 }], { hasPendingOps: false });
     expect(await db.get("items", `${A}:1:wall_length`)).toMatchObject({ result: "PASS", pending: false, nextBase: 1 });
   });
 });

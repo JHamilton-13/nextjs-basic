@@ -6,7 +6,8 @@ export function Projects({ ctx }: { ctx: AppCtx }) {
   const data = useLive(ctx.tick, async () => {
     const projects = await ctx.db.getAll("projects");
     const rooms = await ctx.db.getAll("rooms");
-    const audits = await ctx.db.getAll("audits");
+    const everyVersion = await ctx.db.getAll("audits");
+    const audits = [...new Map(everyVersion.sort((x, y) => x.version - y.version).map((a) => [a.auditId, a] as const)).values()]; // latest version of each audit
     const queue = await ctx.outbox.list();
     const sums = new Map(await Promise.all(audits.map(async (a) => [a.auditId, await auditSummary(ctx.db, a.auditId)] as const)));
     return { projects, rooms, audits, queue, sums };
@@ -31,11 +32,11 @@ export function Projects({ ctx }: { ctx: AppCtx }) {
           <button className="primary" onClick={() => ctx.go({ name: "start", projectId: p.id })}>Start site audit</button>
           {data.audits.filter((a) => a.projectId === p.id).map((a) => {
             const s = data.sums.get(a.auditId);
-            const created = data.queue.find((q) => q.auditId === a.auditId && q.op.entity === "audit");
+            const created = data.queue.find((q) => q.auditId === a.auditId && q.op.entity === "audit" && q.op.entityId === a.key && (q.op.payload.action === "create" || q.op.payload.action === "revise"));
             const room = data.rooms.find((r) => r.id === a.roomId)?.name ?? "No room";
             return (
               <button className="row" key={a.auditId} onClick={() => ctx.go({ name: "audit", auditId: a.auditId })} data-testid="audit-row">
-                <span>{room}<small> · {s?.entered ?? 0}/{s?.total ?? 0} items</small></span>
+                <span>{room}<small> · {s?.entered ?? 0}/{s?.total ?? 0} items{a.version > 1 ? ` · version ${a.version}` : ""}</small></span>
                 <span className={`chip ${created?.state.status === "confirmed" ? "good" : "warn"}`}>{created?.state.status === "confirmed" ? "On server" : "Not synced yet"}</span>
               </button>
             );

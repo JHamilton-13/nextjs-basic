@@ -31,8 +31,14 @@ export async function resolveIdentity(sb: SupabaseClient | null, db: Db): Promis
     try {
       const { data } = await sb.auth.getSession();
       const u = data.session?.user;
-      if (u?.email) { const id = { userId: u.id, email: u.email }; await setIdentity(db, id); return { identity: id, hasSession: true }; }
+      if (u?.email) {
+        const meta = (u.user_metadata ?? {}) as { full_name?: string; name?: string };
+        const id = { userId: u.id, email: u.email, label: (meta.full_name || meta.name || u.email).trim() };
+        await setIdentity(db, id);
+        return { identity: id, hasSession: true };
+      }
     } catch { /* fall through to the stored identity */ }
   }
-  return { identity: await getIdentity(db), hasSession: false };
+  const stored = await getIdentity(db);
+  return { identity: stored ? { ...stored, label: stored.label || stored.email } : undefined, hasSession: false };
 }

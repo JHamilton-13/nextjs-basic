@@ -21,9 +21,12 @@ Last updated: 2026-11-08
 ## Completed (Step 4, 2026-11-08: finish the installer audit — AWAITING OWNER REVIEW)
 - Photos (capture, compress, durable queue with register/upload/confirm), check/observation/MEP item entry with server-mirrored evidence rules, critical-fail banner, submit with warnings (no gating, per owner), read-only after submit, server-confirmed readiness, separate upload lane. 45 field unit tests + 43-check offline Playwright run. Migration 1000 (`confirm_photo` size check) written/tested locally, **NOT applied**. See `docs/testing/step4-complete-audit-results.md`.
 
+## Completed (Step 5, 2026-11-08: revise, annotation, who/when — AWAITING OWNER REVIEW; migration 1100 NOT applied)
+- Offline revise (version n+1, results and who/when carried over, earlier version read-only), version tabs, photo mark-up editor (pen, highlighter, text; editable vector marks; flattened annotated COPY; original untouched), who/when on every result, issue and the audit (none on photos), device-database upgrade v3. 77 field unit tests + 74-check offline Playwright run + 276 DB assertions. See `docs/testing/step5-revise-annotate-results.md`.
+
 ## Not started
 - `packages/integration-contract` is a bare `package.json` stub. `apps/web` is still the unmodified Next.js starter (relocated); the manager dashboard is not built.
-- PWA: revise a submitted audit (server function exists), photo markup/annotation, in-app notifications inbox, conflict resolution screen, real-device trial. Manager release/override screens and dashboard (apps/web).
+- PWA: in-app notifications inbox, conflict resolution screen, more annotation tools (arrow/shapes/eraser/zoom), real-device trial. Manager release/override screens and dashboard (apps/web).
 - Enabling the auth hook, Google/email OTP setup, first-admin bootstrap (steps in `supabase/README.md`); inserting the company's real audit template.
 
 ## Blockers

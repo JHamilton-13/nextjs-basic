@@ -32,7 +32,7 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
 
     browser = await chromium.launch();
     const context = await browser.newContext({ serviceWorkers: "allow" });
-    const session = { access_token: "test-token", token_type: "bearer", expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: "r", user: { id: USER, aud: "authenticated", email: "installer@phc.test", app_metadata: {}, user_metadata: {}, created_at: "2026-11-08T00:00:00Z" } };
+    const session = { access_token: "test-token", token_type: "bearer", expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: "r", user: { id: USER, aud: "authenticated", email: "installer@phc.test", app_metadata: {}, user_metadata: { full_name: "Pat Installer" }, created_at: "2026-11-08T00:00:00Z" } };
     await context.addInitScript((s) => { if (!localStorage.getItem("phc-auth")) localStorage.setItem("phc-auth", JSON.stringify(s)); }, session);
     const page = await context.newPage();
     page.on("pageerror", (e) => console.log("  [pageerror]", e.message));
@@ -186,6 +186,113 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     check((await page.getByTestId("item-outlets").getByTestId("photo-status").innerText()) === "Uploaded", "photo shows 'Uploaded' only after the server confirmed it");
     const local = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = () => resolve(q.result.map((p) => ({ confirmed: p.confirmed, hasBlob: !!p.blob, hasOriginal: !!p.originalBlob, hasThumb: !!p.thumb }))); }; }));
     check(local.length === 1 && local[0].confirmed && !local[0].hasBlob && !local[0].hasOriginal && local[0].hasThumb, "after confirmation the heavy copies are removed from the device (preview kept)");
+
+    console.log("== who and when are recorded on the audit and on each issue");
+    const rec = await page.getByTestId("recorded-outlets").innerText();
+    check(rec.includes("Pat Installer") && /\d{4}/.test(rec) && /\d:\d\d/.test(rec), "a result shows who recorded it and when: " + rec);
+    const iss = await page.getByTestId("issue-outlets").innerText();
+    check(iss.startsWith("Issue raised by Pat Installer") && /\d:\d\d/.test(iss), "a failed item shows who raised the issue and when: " + iss);
+    const hist = await page.getByTestId("audit-history").innerText();
+    check(hist.includes("Started by Pat Installer") && hist.includes("Submitted by Pat Installer"), "the audit shows who started and who submitted it, with times");
+    const rows1 = await (await fetch(`${MOCK}/__rows`)).json();
+    const k1 = Object.keys(rows1).find((k) => k.endsWith(":1:outlets"));
+    check(rows1[k1].result_by === "Pat Installer" && rows1[k1].issue_by === "Pat Installer" && !!rows1[k1].issue_at, "the server stored who and when for the result and for the issue");
+    const photoNoStamp = await page.getByTestId("item-outlets").getByTestId("photo-thumb").first().innerText();
+    check(!/\d:\d\d/.test(photoNoStamp), "photos themselves carry no timestamp text");
+
+    console.log("== NETWORK OFF: revise the submitted audit, mark up a photo, correct the critical item, resubmit");
+    await context.setOffline(true);
+    await page.getByTestId("revise-audit").click();
+    check(await page.getByTestId("confirm-revise").isDisabled(), "revise needs a reason (button disabled until one is typed)");
+    await page.getByTestId("revise-reason-input").fill("GC moved the outlet; re-checked on site");
+    await page.getByTestId("confirm-revise").click();
+    await page.getByTestId("versions").waitFor();
+    check((await page.getByTestId("version-2").innerText()).includes("(current)"), "offline: version 2 created and is the current version");
+    check((await page.getByTestId("revise-reason").innerText()).includes("GC moved the outlet"), "the reason for the revision is shown");
+    await openSection("mep");
+    check((await page.getByTestId("result-outlets").innerText()) === "FAIL" && (await page.getByTestId("issue-outlets").count()) === 1, "results and who/when carry over into the revision");
+    check((await page.getByTestId("submit-panel").count()) === 1, "the revision is an editable draft again");
+
+    await page.getByTestId("version-1").click();
+    await page.getByTestId("old-version-banner").waitFor();
+    check((await page.getByTestId("item-outlets").getByTestId("mark-fail").count()) === 0 && (await page.getByTestId("revise-audit").count()) === 0, "version 1 is read-only (the saved record)");
+    check((await page.getByTestId("readiness").innerText()) === "NOT READY", "version 1 keeps its own NOT READY result");
+    await page.getByTestId("version-2").click();
+    await openSection("mep");
+
+    const out = page.getByTestId("item-outlets");
+    // the version-1 photo was cleaned up after upload, so with no connection it cannot be edited: the app says so plainly
+    await out.getByTestId("annotate-btn").first().click();
+    await out.locator('[role="alert"]').first().waitFor();
+    check((await out.locator('[role="alert"]').first().innerText()).includes("no longer stored on the device") && (await page.getByTestId("annotate-modal").count()) === 0, "offline: a photo already cleaned up after upload explains that it needs a connection to mark up");
+
+    await out.getByTestId("photo-input-outlets").setInputFiles(ICON);
+    await waitFor(async () => (await out.getByTestId("photo-thumb").count()) === 2, "second photo thumb");
+    await out.getByTestId("annotate-btn").nth(1).click();
+    const canvas = page.getByTestId("annotate-canvas");
+    await waitFor(async () => (await canvas.evaluate((c) => c.width)) > 0 && (await canvas.boundingBox()), "annotation canvas ready");
+    const box = await canvas.boundingBox();
+    const drag = async (x1, y1, x2, y2) => { await page.mouse.move(box.x + box.width * x1, box.y + box.height * y1); await page.mouse.down(); await page.mouse.move(box.x + box.width * ((x1 + x2) / 2), box.y + box.height * ((y1 + y2) / 2)); await page.mouse.move(box.x + box.width * x2, box.y + box.height * y2); await page.mouse.up(); };
+    check(await page.getByTestId("save-annotation").isDisabled(), "save is disabled until something is drawn");
+    await page.getByTestId("tool-pen").click(); await page.getByTestId("color-0").click(); await drag(0.15, 0.2, 0.55, 0.45);
+    await page.getByTestId("tool-highlight").click(); await page.getByTestId("color-1").click(); await drag(0.2, 0.7, 0.8, 0.7);
+    await page.getByTestId("tool-text").click(); await page.getByTestId("color-3").click();
+    await canvas.click({ position: { x: box.width * 0.3, y: box.height * 0.1 } });
+    await page.getByTestId("text-input").fill("outlet is 6in left of spec");
+    await page.getByTestId("text-add").click();
+    check(await page.getByTestId("undo").isEnabled() && await page.getByTestId("save-annotation").isEnabled(), "pen, highlighter and text marks drawn; save enabled");
+    await page.getByTestId("save-annotation").click();
+    await waitFor(async () => (await out.getByTestId("photo-thumb").count()) === 3, "annotated copy appears");
+    check((await out.locator('[data-annotated="yes"]').count()) === 1 && (await out.getByTestId("photo-kind").innerText()) === "Marked up", "offline: a marked-up COPY is saved next to the originals");
+
+    await out.getByTestId("edit-marks").click();
+    await waitFor(async () => (await page.getByTestId("undo").isEnabled()), "editor reopened with the saved marks");
+    check(true, "the saved marks reopen for editing (marks are stored as editable data, not just pixels)");
+    await page.getByTestId("cancel-annotation").click();
+
+    await out.getByTestId("note").fill("outlet moved to the spec location");
+    await out.getByTestId("mark-pass").click();
+    await page.getByTestId("pending-outlets").waitFor();
+    check((await out.getByTestId("issue-outlets").count()) === 0 && (await page.getByTestId("readiness").innerText()) === "In progress", "correcting the item clears the issue; the earlier photo still satisfied the photo rule");
+    check((await page.getByTestId("recorded-outlets").innerText()).includes("Pat Installer"), "the correction records who and when");
+    await page.getByTestId("submit-audit").click(); await page.getByTestId("confirm-submit").click();
+    await page.getByTestId("submitted-panel").waitFor();
+    check((await page.getByTestId("readiness").innerText()) === "Manager review required", "revision 2 submitted: the critical item is fixed, but the wall length still in the REVIEW zone needs a manager's decision");
+    check((await page.getByTestId("pending-count").innerText()).startsWith("9 "), "offline: 9 changes waiting (revise, new photo x3, marked-up copy x3, the correction, submit)");
+
+    console.log("== back online: everything for version 2 syncs");
+    await control({ storageDown: false });
+    await context.setOffline(false);
+    await page.getByRole("button", { name: "Sync queue" }).click();
+    await waitFor(async () => { const t = await page.getByTestId("queue-status").allInnerTexts(); return t.length === 18 && t.every((x) => x === "synced"); }, "all 18 ops synced");
+    const s3 = await mockState(); const ph3 = await (await fetch(`${MOCK}/__photos`)).json();
+    check(s3.log.filter((l) => l.entity === "audit" && l.action === "revise" && l.entityId.endsWith(":2") && l.outcome === "applied").length === 1, "the revise operation was applied exactly once");
+    const ann = ph3.photos.find((p) => p.annotated_from);
+    check(!!ann && ann.annotations.length === 3 && ann.annotations.map((a) => a.type).sort().join() === "highlight,pen,text", "the server stored the marks as editable data: pen, highlighter and text");
+    check(ann.version === 2 && ph3.photos.filter((p) => !p.annotated_from).length === 2, "the copy belongs to version 2 and links to its original; there are 2 original photos");
+    check(ph3.photos.every((p) => p.confirmed && ph3.objects[p.storage_path] === p.bytes), "all 3 photos uploaded, sizes match, and confirmed");
+    const rows3 = await (await fetch(`${MOCK}/__rows`)).json();
+    const k2 = Object.keys(rows3).find((k) => k.endsWith(":2:outlets"));
+    check(rows3[k2].result === "PASS" && rows3[k2].issue_at === null && rows3[k2].result_by === "Pat Installer", "version 2 on the server: PASS, issue cleared, recorded by Pat Installer");
+    check(rows1[k1].result === "FAIL" && (await (await fetch(`${MOCK}/__rows`)).json())[k1].result === "FAIL", "version 1 on the server is unchanged (still FAIL)");
+    await page.getByRole("button", { name: "Projects" }).click();
+    await page.getByTestId("audit-row").click();
+    await page.getByTestId("server-state").waitFor();
+    check((await page.getByTestId("readiness").innerText()) === "Manager review required", "the server's own readiness for version 2 (Manager review required) is shown");
+    await page.getByTestId("version-1").click();
+    await waitFor(async () => (await page.getByTestId("readiness").innerText()) === "NOT READY", "version 1 shows NOT READY");
+    check(true, "version 1 still shows the server's NOT READY");
+    await page.getByTestId("version-2").click();
+    const local3 = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = () => resolve(q.result.map((p) => ({ confirmed: p.confirmed, hasBlob: !!p.blob, annotated: !!p.annotatedFrom, marks: p.annotations ? p.annotations.length : 0 }))); }; }));
+    check(local3.length === 3 && local3.every((p) => p.confirmed && !p.hasBlob) && local3.find((p) => p.annotated).marks === 3, "after upload the images leave the phone but the editable marks stay");
+
+    console.log("== online: an old photo that left the phone is downloaded so its marks can be edited");
+    await openSection("mep");
+    await page.getByTestId("item-outlets").getByTestId("annotate-btn").first().click();
+    await page.getByTestId("annotate-modal").waitFor();
+    await waitFor(async () => (await canvas.evaluate((c) => c.width)) > 0, "editor open on the downloaded photo");
+    check((await mockState()).log.some((l) => l.entity === "photo_download"), "the original was downloaded from storage to edit it");
+    await page.getByTestId("cancel-annotation").click();
     console.log(`\nE2E PASSED: ${results.length} checks`);
   } finally {
     if (browser) await browser.close();

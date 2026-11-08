@@ -41,3 +41,13 @@ button.fail { background: var(--bad); color: #fff; border-color: var(--bad); }
 .thumbs img { border-radius: 8px; object-fit: cover; border: 1px solid var(--line); } .thumbs .ok { color: var(--good); } .thumbs .wait { color: var(--warn); }
 .small-chip { font-size: .7rem; vertical-align: middle; }
 summary strong { font-size: 1.05rem; }
+.versions { display: flex; gap: .4rem; flex-wrap: wrap; } .versions .on, .tools .on { background: var(--charcoal); color: #fff; border-color: var(--charcoal); }
+.issue { color: var(--bad); font-weight: 600; margin: .2rem 0; } .small { font-size: .85rem; }
+.thumbs figure button.small { min-height: 32px; margin-top: .2rem; font-size: .75rem; padding: .1rem .5rem; }
+.modal { position: fixed; inset: 0; z-index: 10; background: #111; color: #fff; display: flex; flex-direction: column; padding: env(safe-area-inset-top) .75rem env(safe-area-inset-bottom); overflow: auto; }
+.modal-bar { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .5rem 0; } .modal .muted { color: #aaa; }
+.canvas-wrap { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
+canvas.annot { max-width: 100%; max-height: 60vh; touch-action: none; background: #000; border-radius: 6px; cursor: crosshair; }
+.tools { display: flex; flex-wrap: wrap; gap: .4rem; align-items: center; padding: .5rem 0; } .tools button { min-height: 44px; }
+.swatches { display: inline-flex; gap: .3rem; } .sw { width: 40px; min-height: 40px; border-radius: 50%; border: 2px solid #fff; padding: 0; } .sw.on { outline: 3px solid #f2b705; }
+.textrow { display: flex; gap: .5rem; padding: .5rem 0; } .textrow input { margin: 0; }

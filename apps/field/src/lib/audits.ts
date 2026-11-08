@@ -8,9 +8,31 @@ export interface Ctx {
   db: Db;
   outbox: Outbox;
   userId: string;
+  /** Display name (or email) of the signed-in user: stored with results so "who" survives offline and later sync. */
+  userLabel: string;
   newId: () => string;
   now: () => string;
 }
+
+/** The newest local version of an audit: the only one that can be edited. */
+export async function latestAudit(db: Db, auditId: string): Promise<LocalAudit | undefined> {
+  const all = await db.getAllFromIndex("audits", "by_audit_id", auditId);
+  return all.sort((a, b) => b.version - a.version)[0];
+}
+
+const isIssue = (r: string) => r === "FAIL" || r === "REVIEW";
+
+/** Who recorded this result and when; and who raised the issue. An issue (FAIL/REVIEW) keeps its first raiser while it stays an issue. */
+function attribution(ctx: Ctx, item: LocalItem, newResult: string): Pick<LocalItem, "resultBy" | "resultAt" | "issueBy" | "issueAt"> {
+  const at = ctx.now();
+  const base = { resultBy: ctx.userLabel, resultAt: at };
+  if (!isIssue(newResult)) return base;
+  if (isIssue(item.result) && item.issueBy && item.issueAt) return { ...base, issueBy: item.issueBy, issueAt: item.issueAt };
+  return { ...base, issueBy: ctx.userLabel, issueAt: at };
+}
+
+/** Drops any issue fields carried on `item` (used when the result is no longer an issue). */
+const withoutIssue = (item: LocalItem): LocalItem => { const { issueBy: _b, issueAt: _a, ...rest } = item; return rest; }
 
 export type StartError = { code: "template_not_cached" | "project_not_cached" | "audit_exists"; message: string };
 
@@ -24,20 +46,20 @@ export async function startAudit(
   input: { auditId: string; projectId: string; roomId: string | null; templateId: string },
 ): Promise<Result<LocalAudit, StartError>> {
   const { db } = ctx;
-  const [template, project, existing] = await Promise.all([db.get("templates", input.templateId), db.get("projects", input.projectId), db.get("audits", input.auditId)]);
+  const [template, project, existing] = await Promise.all([db.get("templates", input.templateId), db.get("projects", input.projectId), latestAudit(db, input.auditId)]);
   if (!template) return err({ code: "template_not_cached", message: "That template is not available offline yet. Connect once to download it." });
   if (!project) return err({ code: "project_not_cached", message: "That project is not available offline yet. Connect once to download it." });
   if (existing) return err({ code: "audit_exists", message: "This audit was already started." });
 
-  const audit: LocalAudit = { auditId: input.auditId, version: 1, projectId: input.projectId, roomId: input.roomId, templateId: input.templateId, createdBy: ctx.userId, createdAt: ctx.now() };
+  const audit: LocalAudit = { key: `${input.auditId}:1`, auditId: input.auditId, version: 1, projectId: input.projectId, roomId: input.roomId, templateId: input.templateId, createdBy: ctx.userId, createdByLabel: ctx.userLabel, createdAt: ctx.now() };
   const op: OperationEnvelope = {
-    opId: ctx.newId(), entity: "audit", entityId: `${audit.auditId}:1`, baseVersion: 0,
+    opId: ctx.newId(), entity: "audit", entityId: audit.key, baseVersion: 0,
     payload: { action: "create", projectId: audit.projectId, roomId: audit.roomId, templateId: audit.templateId },
     createdAt: ctx.now(), actor: ctx.userId,
   };
   const items: LocalItem[] = template.config.sections.flatMap((s) =>
     s.items.map((it): LocalItem => ({
-      key: `${audit.auditId}:1:${it.key}`, auditId: audit.auditId, itemKey: it.key, sectionKey: s.key, sectionTitle: s.title,
+      key: `${audit.key}:${it.key}`, auditId: audit.auditId, version: 1, auditKey: audit.key, itemKey: it.key, sectionKey: s.key, sectionTitle: s.title,
       label: it.label, kind: it.kind, critical: it.critical, requires: it.requires ?? {},
       ...(it.rule ? { rule: it.rule } : {}), result: "NOT_ENTERED", pending: false, nextBase: 0,
     })));
@@ -67,9 +89,10 @@ export interface MeasurementOutcome { result: "PASS" | "REVIEW" | "FAIL"; deviat
  */
 export async function recordMeasurement(ctx: Ctx, input: MeasurementInput): Promise<Result<MeasurementOutcome, MeasurementError>> {
   const { db } = ctx;
-  const item = await db.get("items", `${input.auditId}:1:${input.itemKey}`);
-  if (!item) return err({ code: "unknown_item", message: "That item is not part of this audit." });
-  if ((await db.get("audits", input.auditId))?.submittedAt) return err({ code: "audit_submitted", message: "This audit was submitted and can no longer be edited." });
+  const audit = await latestAudit(db, input.auditId);
+  const item = audit ? await db.get("items", `${audit.key}:${input.itemKey}`) : undefined;
+  if (!audit || !item) return err({ code: "unknown_item", message: "That item is not part of this audit." });
+  if (audit.submittedAt) return err({ code: "audit_submitted", message: "This audit was submitted and can no longer be edited. Revise it to make changes." });
   if (item.kind !== "tolerance" || !item.rule) return err({ code: "not_a_measurement_item", message: "This item is not a measurement." });
 
   const expected = parseLength(input.expected);
@@ -99,7 +122,7 @@ export async function recordMeasurement(ctx: Ctx, input: MeasurementInput): Prom
     createdAt: ctx.now(), actor: ctx.userId,
   };
   const updated: LocalItem = {
-    ...item, result: ev.value.result, pending: true, nextBase: item.nextBase + 1,
+    ...withoutIssue(item), ...attribution(ctx, item, ev.value.result), result: ev.value.result, pending: true, nextBase: item.nextBase + 1,
     expected64: expected.value, actual64: actual.value, deviation64: ev.value.deviation, drawingRef, ...(note ? { note } : {}),
   };
   const tx = db.transaction(["items", "outbox"], "readwrite");
@@ -109,23 +132,31 @@ export async function recordMeasurement(ctx: Ctx, input: MeasurementInput): Prom
   return ok({ result: ev.value.result, deviation64: ev.value.deviation, opId: op.opId });
 }
 
-export interface ServerItemRow { item_key: string; result: string; row_version: number }
+export interface ServerItemRow {
+  item_key: string; result: string; row_version: number;
+  result_at?: string | null; result_by_label?: string | null; issue_raised_at?: string | null; issue_raised_by_label?: string | null;
+}
 
 /** Once every queued op for an audit is confirmed, the server's answer replaces the provisional local one. */
-export async function reconcileFromServer(db: Db, auditId: string, rows: ServerItemRow[], o: { hasPendingOps: boolean }): Promise<void> {
+export async function reconcileFromServer(db: Db, auditId: string, version: number, rows: ServerItemRow[], o: { hasPendingOps: boolean }): Promise<void> {
   if (o.hasPendingOps) return;
   const tx = db.transaction("items", "readwrite");
   for (const row of rows) {
-    const cur = await tx.store.get(`${auditId}:1:${row.item_key}`);
-    if (cur) await tx.store.put({ ...cur, result: row.result as LocalResult, pending: false, nextBase: row.row_version });
+    const cur = await tx.store.get(`${auditId}:${version}:${row.item_key}`);
+    if (!cur) continue;
+    const next: LocalItem = { ...withoutIssue(cur), result: row.result as LocalResult, pending: false, nextBase: row.row_version };
+    if (row.result_at) { next.resultAt = row.result_at; if (row.result_by_label) next.resultBy = row.result_by_label; }
+    if (row.issue_raised_at) { next.issueAt = row.issue_raised_at; if (row.issue_raised_by_label) next.issueBy = row.issue_raised_by_label; }
+    await tx.store.put(next);
   }
   await tx.done;
 }
 
 export interface AuditSummary { total: number; entered: number; pass: number; review: number; fail: number; criticalFail: boolean }
 
-export async function auditSummary(db: Db, auditId: string): Promise<AuditSummary> {
-  const items = await db.getAllFromIndex("items", "by_audit", auditId);
+export async function auditSummary(db: Db, auditId: string, version?: number): Promise<AuditSummary> {
+  const audit = version ? await db.get("audits", `${auditId}:${version}`) : await latestAudit(db, auditId);
+  const items = audit ? await db.getAllFromIndex("items", "by_audit", audit.key) : [];
   const count = (r: LocalResult) => items.filter((i) => i.result === r).length;
   return {
     total: items.length, entered: items.filter((i) => i.result !== "NOT_ENTERED").length,
@@ -149,11 +180,11 @@ export async function recordCheck(
   input: { auditId: string; itemKey: string; result: CheckResult; note?: string; drawingRef?: string },
 ): Promise<Result<{ result: CheckResult }, CheckError>> {
   const { db } = ctx;
-  const audit = await db.get("audits", input.auditId);
+  const audit = await latestAudit(db, input.auditId);
   if (!audit) return err({ code: "audit_not_found", message: "That audit is not on this device." });
-  const item = await db.get("items", `${input.auditId}:1:${input.itemKey}`);
+  const item = await db.get("items", `${audit.key}:${input.itemKey}`);
   if (!item) return err({ code: "unknown_item", message: "That item is not part of this audit." });
-  if (audit.submittedAt) return err({ code: "audit_submitted", message: "This audit was submitted and can no longer be edited." });
+  if (audit.submittedAt) return err({ code: "audit_submitted", message: "This audit was submitted and can no longer be edited. Revise it to make changes." });
   if (item.kind === "tolerance") return err({ code: "use_measurement", message: "This item is a measurement. Enter the measured value instead." });
   const allowed: CheckResult[] = item.kind === "observation" ? ["OBSERVED"] : ["PASS", "FAIL", "REVIEW", "NOT_APPLICABLE"];
   if (!allowed.includes(input.result)) return err({ code: "invalid_result", message: item.kind === "observation" ? "Observation items are only marked as observed." : "Choose pass, fail, review or not applicable." });
@@ -168,7 +199,7 @@ export async function recordCheck(
     payload: { result: input.result, ...(note ? { note } : {}), ...(drawingRef ? { drawingRef } : {}) },
     createdAt: ctx.now(), actor: ctx.userId,
   };
-  const updated: LocalItem = { ...item, result: input.result, pending: true, nextBase: item.nextBase + 1, ...(note ? { note } : {}), ...(drawingRef ? { drawingRef } : {}) };
+  const updated: LocalItem = { ...withoutIssue(item), ...attribution(ctx, item, input.result), result: input.result, pending: true, nextBase: item.nextBase + 1, ...(note ? { note } : {}), ...(drawingRef ? { drawingRef } : {}) };
   const tx = db.transaction(["items", "outbox"], "readwrite");
   await Promise.all([tx.objectStore("items").put(updated), tx.objectStore("outbox").add(newOutboxRecord(op, input.auditId))]);
   await tx.done;
@@ -183,14 +214,14 @@ export type SubmitError = { code: "audit_not_found" | "already_submitted"; messa
  * After this the audit is read-only here; a manager decides on release.
  */
 export async function submitAudit(ctx: Ctx, input: { auditId: string }): Promise<Result<{ submittedAt: string }, SubmitError>> {
-  const audit = await ctx.db.get("audits", input.auditId);
+  const audit = await latestAudit(ctx.db, input.auditId);
   if (!audit) return err({ code: "audit_not_found", message: "That audit is not on this device." });
   if (audit.submittedAt) return err({ code: "already_submitted", message: "This audit was already submitted." });
   const at = ctx.now();
-  // row_version of a freshly created audit on the server is 1; the queued create op always precedes this one.
-  const op: OperationEnvelope = { opId: ctx.newId(), entity: "audit", entityId: `${audit.auditId}:1`, baseVersion: 1, payload: { action: "submit" }, createdAt: at, actor: ctx.userId };
+  // Every audit version starts at server row_version 1; the queued create/revise op always precedes this one.
+  const op: OperationEnvelope = { opId: ctx.newId(), entity: "audit", entityId: audit.key, baseVersion: 1, payload: { action: "submit" }, createdAt: at, actor: ctx.userId };
   const tx = ctx.db.transaction(["audits", "outbox"], "readwrite");
-  await Promise.all([tx.objectStore("audits").put({ ...audit, submittedAt: at }), tx.objectStore("outbox").add(newOutboxRecord(op, audit.auditId))]);
+  await Promise.all([tx.objectStore("audits").put({ ...audit, submittedAt: at, submittedBy: ctx.userId, submittedByLabel: ctx.userLabel }), tx.objectStore("outbox").add(newOutboxRecord(op, audit.auditId))]);
   await tx.done;
   ctx.outbox.notify();
   return ok({ submittedAt: at });
@@ -199,14 +230,14 @@ export async function submitAudit(ctx: Ctx, input: { auditId: string }): Promise
 export interface Readiness { state: ReadinessState; fromServer: boolean; notEntered: number; criticalNotEntered: string[]; criticalFailed: string[] }
 
 /** Readiness shown to the installer: the server's answer once known, otherwise computed locally with the domain rules. */
-export async function auditReadiness(db: Db, auditId: string): Promise<Readiness> {
-  const audit = await db.get("audits", auditId);
+export async function auditReadiness(db: Db, auditId: string, version?: number): Promise<Readiness> {
+  const audit = version ? await db.get("audits", `${auditId}:${version}`) : await latestAudit(db, auditId);
   if (!audit) throw new Error("audit not found");
-  const items = await db.getAllFromIndex("items", "by_audit", auditId);
+  const items = await db.getAllFromIndex("items", "by_audit", audit.key);
   const template = await db.get("templates", audit.templateId);
   const outcomes: AuditItemOutcome[] = items.map((i) => ({ itemId: i.itemKey, critical: i.critical, result: i.result }));
   const local = auditState(
-    { auditId, projectId: audit.projectId, version: 1, submitted: Boolean(audit.submittedAt), items: outcomes, overrides: [] },
+    { auditId, projectId: audit.projectId, version: audit.version, submitted: Boolean(audit.submittedAt), items: outcomes, overrides: [] },
     { nonCriticalIssueState: template?.config.policy.nonCriticalIssueState ?? "manager_review_required" },
   );
   return {
@@ -220,13 +251,41 @@ export async function auditReadiness(db: Db, auditId: string): Promise<Readiness
 export interface SectionGroup { key: string; title: string; total: number; entered: number; items: LocalItem[] }
 
 /** Items grouped by checklist section, in the template's own order (IndexedDB returns them sorted by key). */
-export async function groupedItems(db: Db, auditId: string): Promise<SectionGroup[]> {
-  const audit = await db.get("audits", auditId);
-  const items = await db.getAllFromIndex("items", "by_audit", auditId);
+export async function groupedItems(db: Db, auditId: string, version?: number): Promise<SectionGroup[]> {
+  const audit = version ? await db.get("audits", `${auditId}:${version}`) : await latestAudit(db, auditId);
+  const items = audit ? await db.getAllFromIndex("items", "by_audit", audit.key) : [];
   const template = audit ? await db.get("templates", audit.templateId) : undefined;
   const byKey = new Map(items.map((i) => [i.itemKey, i] as const));
   const sections = template
     ? template.config.sections.map((s) => ({ key: s.key, title: s.title, items: s.items.map((it) => byKey.get(it.key)).filter((i): i is LocalItem => Boolean(i)) }))
     : [{ key: "all", title: "Items", items }];
   return sections.map((s) => ({ ...s, total: s.items.length, entered: s.items.filter((i) => i.result !== "NOT_ENTERED").length }));
+}
+
+export type ReviseError = { code: "audit_not_found" | "not_submitted" | "reason_required"; message: string };
+
+/**
+ * Starts a revision (version n+1) of a SUBMITTED audit, entirely offline. Results, notes and who/when carry over so the
+ * installer only changes what is wrong; the previous version stays untouched and read-only as the record. Earlier photos
+ * keep counting as evidence. The revise operation is queued right after the previous version's submit.
+ */
+export async function reviseAudit(ctx: Ctx, input: { auditId: string; reason: string }): Promise<Result<{ version: number }, ReviseError>> {
+  const cur = await latestAudit(ctx.db, input.auditId);
+  if (!cur) return err({ code: "audit_not_found", message: "That audit is not on this device." });
+  if (!cur.submittedAt) return err({ code: "not_submitted", message: "This audit has not been submitted, so you can keep editing it." });
+  const reason = input.reason.trim();
+  if (!reason) return err({ code: "reason_required", message: "Say why you are revising this audit." });
+
+  const version = cur.version + 1;
+  const audit: LocalAudit = {
+    key: `${cur.auditId}:${version}`, auditId: cur.auditId, version, projectId: cur.projectId, roomId: cur.roomId, templateId: cur.templateId,
+    createdBy: ctx.userId, createdByLabel: ctx.userLabel, createdAt: ctx.now(), reviseReason: reason,
+  };
+  const items = (await ctx.db.getAllFromIndex("items", "by_audit", cur.key)).map((i): LocalItem => ({ ...i, key: `${audit.key}:${i.itemKey}`, version, auditKey: audit.key, pending: false, nextBase: 0 }));
+  const op: OperationEnvelope = { opId: ctx.newId(), entity: "audit", entityId: audit.key, baseVersion: 0, payload: { action: "revise", reason }, createdAt: ctx.now(), actor: ctx.userId };
+  const tx = ctx.db.transaction(["audits", "items", "outbox"], "readwrite");
+  await Promise.all([tx.objectStore("audits").add(audit), ...items.map((i) => tx.objectStore("items").add(i)), tx.objectStore("outbox").add(newOutboxRecord(op, audit.auditId))]);
+  await tx.done;
+  ctx.outbox.notify();
+  return ok({ version });
 }

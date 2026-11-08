@@ -1,9 +1,13 @@
 import { useState } from "react";
 import { evaluate, formatLength, parseLength, type ReadinessState, type ToleranceSource } from "@phc/domain";
 import type { AppCtx } from "../App";
-import { auditReadiness, groupedItems, recordCheck, recordMeasurement, submitAudit, type CheckResult } from "../lib/audits";
+import { auditReadiness, groupedItems, latestAudit, recordCheck, recordMeasurement, reviseAudit, submitAudit, type CheckResult } from "../lib/audits";
 import { browserCompress } from "../lib/imaging";
-import { addPhoto } from "../lib/photos";
+import { addPhoto, photoSourceBlob } from "../lib/photos";
+import { supabase } from "../lib/supabase";
+import type { Shape } from "../lib/annotations";
+import { AnnotateModal } from "./AnnotateModal";
+import { fmtWhen } from "./when";
 import type { LocalItem, LocalPhoto } from "../lib/types";
 import { useLive } from "./useLive";
 
@@ -15,48 +19,65 @@ const STATE_LABEL: Record<ReadinessState, string> = {
 const STATE_CLASS: Record<ReadinessState, string> = {
   not_started: "gray", in_progress: "progress", ready: "good", ready_with_exceptions: "warn", not_ready: "bad", manager_review_required: "warn", released_for_installation: "good",
 };
-const mkCtx = (ctx: AppCtx) => ({ db: ctx.db, outbox: ctx.outbox, userId: ctx.identity.userId, newId: () => crypto.randomUUID(), now: () => new Date().toISOString() });
+const mkCtx = (ctx: AppCtx) => ({ db: ctx.db, outbox: ctx.outbox, userId: ctx.identity.userId, userLabel: ctx.identity.label, newId: () => crypto.randomUUID(), now: () => new Date().toISOString() });
 
 export function AuditView({ ctx, auditId }: { ctx: AppCtx; auditId: string }) {
+  const [viewVersion, setViewVersion] = useState<number | null>(null);
   const data = useLive(ctx.tick, async () => {
-    const audit = await ctx.db.get("audits", auditId);
-    const room = audit?.roomId ? await ctx.db.get("rooms", audit.roomId) : undefined;
-    const project = audit ? await ctx.db.get("projects", audit.projectId) : undefined;
+    const versions = (await ctx.db.getAllFromIndex("audits", "by_audit_id", auditId)).sort((x, y) => x.version - y.version);
+    const latest = await latestAudit(ctx.db, auditId);
+    const audit = versions.find((v) => v.version === (viewVersion ?? latest?.version));
+    if (!audit || !latest) return undefined;
+    const room = audit.roomId ? await ctx.db.get("rooms", audit.roomId) : undefined;
+    const project = await ctx.db.get("projects", audit.projectId);
     const queue = (await ctx.outbox.list()).filter((q) => q.auditId === auditId);
-    return { audit, room, project, queue, groups: await groupedItems(ctx.db, auditId), photos: await ctx.db.getAllFromIndex("photos", "by_audit", auditId), ready: await auditReadiness(ctx.db, auditId) };
-  }, [auditId]);
-  if (!data?.audit) return <p>Loading…</p>;
-  const { audit, groups, photos, ready, queue } = data;
-  const locked = Boolean(audit.submittedAt);
-  const created = queue.find((q) => q.op.entity === "audit" && q.op.payload.action === "create");
+    return { audit, latest, versions, room, project, queue, groups: await groupedItems(ctx.db, auditId, audit.version), photos: await ctx.db.getAllFromIndex("photos", "by_audit", auditId), ready: await auditReadiness(ctx.db, auditId, audit.version) };
+  }, [auditId, viewVersion]);
+  if (!data) return <p>Loading…</p>;
+  const { audit, latest, versions, groups, photos, ready, queue } = data;
+  const isLatest = audit.version === latest.version;
+  const locked = Boolean(audit.submittedAt) || !isLatest;
+  const created = queue.find((q) => q.op.entity === "audit" && q.op.entityId === audit.key && (q.op.payload.action === "create" || q.op.payload.action === "revise"));
   const entered = groups.reduce((n, g) => n + g.entered, 0); const total = groups.reduce((n, g) => n + g.total, 0);
-  const photosFor = (key: string | null) => photos.filter((p) => p.itemKey === key);
+  // oldest first, so the strip reads in the order the photos were taken (IndexedDB returns them in id order)
+  const photosFor = (key: string | null) => photos.filter((p) => p.itemKey === key).sort((a, b) => a.capturedAt.localeCompare(b.capturedAt));
 
   return (
     <>
       <button className="link" onClick={() => ctx.go({ name: "projects" })}>← Projects</button>
       <h1>{data.project?.name ?? "Audit"}</h1>
-      <p className="muted">{data.room?.name ?? "No room"} · {entered}/{total} items entered{locked ? " · submitted" : ""}</p>
+      <p className="muted">{data.room?.name ?? "No room"} · {entered}/{total} items entered{audit.submittedAt ? " · submitted" : ""}</p>
+      {versions.length > 1 && (
+        <p className="versions" data-testid="versions">
+          {versions.map((v) => <button key={v.version} className={`small ${v.version === audit.version ? "on" : ""}`} onClick={() => setViewVersion(v.version === latest.version ? null : v.version)} data-testid={`version-${v.version}`}>Version {v.version}{v.version === latest.version ? " (current)" : ""}</button>)}
+        </p>
+      )}
+      {!isLatest && <p className="chip warn" data-testid="old-version-banner">Viewing version {audit.version}: the saved record, read-only. Switch to the current version to make changes.</p>}
       <p>
         <span className={`chip ${STATE_CLASS[ready.state]}`} data-testid="readiness">{STATE_LABEL[ready.state]}</span>{" "}
         <span className={`chip ${created?.state.status === "confirmed" ? "good" : "warn"}`} data-testid="audit-sync">{created?.state.status === "confirmed" ? "Audit is on the server" : "Audit saved on this device, not synced yet"}</span>
         {ready.fromServer && <small data-testid="server-state"> confirmed by the server</small>}
       </p>
+      <p className="muted small" data-testid="audit-history">
+        {audit.version === 1 ? "Started" : `Revision ${audit.version} started`} by {audit.createdByLabel || "unknown"} · {fmtWhen(audit.createdAt)}
+        {audit.submittedAt ? <> · Submitted by {audit.submittedByLabel || "unknown"} · {fmtWhen(audit.submittedAt)}</> : null}
+      </p>
+      {audit.reviseReason && <p className="muted small" data-testid="revise-reason">Reason for revision: {audit.reviseReason}</p>}
       {ready.criticalFailed.length > 0 && <p className="chip bad" role="alert" data-testid="critical-banner">Critical item failed: this site is NOT READY. Installation cannot start without a manager's documented override.</p>}
 
       <section className="card">
         <h2>Room photos</h2>
-        <PhotoStrip ctx={ctx} auditId={auditId} itemKey={null} photos={photosFor(null)} disabled={false} />
+        <PhotoStrip ctx={ctx} auditId={auditId} itemKey={null} photos={photosFor(null)} disabled={!isLatest} />
       </section>
 
       {groups.map((g, idx) => (
         <details key={g.key} open={idx === 0} className="card" data-testid={`section-${g.key}`}>
           <summary><strong>{g.title}</strong><small> · {g.entered}/{g.total}</small></summary>
-          {g.items.map((i) => <ItemCard key={i.key} ctx={ctx} item={i} photos={photosFor(i.itemKey)} locked={locked} />)}
+          {g.items.map((i) => <ItemCard key={i.key} ctx={ctx} item={i} photos={photosFor(i.itemKey)} locked={locked} photosDisabled={!isLatest} />)}
         </details>
       ))}
 
-      <SubmitPanel ctx={ctx} auditId={auditId} locked={locked} ready={ready} />
+      {isLatest && <SubmitPanel ctx={ctx} auditId={auditId} locked={locked} ready={ready} />}
     </>
   );
 }
@@ -64,6 +85,7 @@ export function AuditView({ ctx, auditId }: { ctx: AppCtx; auditId: string }) {
 function PhotoStrip({ ctx, auditId, itemKey, photos, disabled }: { ctx: AppCtx; auditId: string; itemKey: string | null; photos: LocalPhoto[]; disabled: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState<{ original: LocalPhoto; source: Blob; initial: Shape[] } | null>(null);
   async function onFile(files: FileList | null) {
     if (!files || files.length === 0) return;
     setBusy(true); setError(null);
@@ -74,13 +96,28 @@ function PhotoStrip({ ctx, auditId, itemKey, photos, disabled }: { ctx: AppCtx; 
     setBusy(false);
     void ctx.sync();
   }
+  /** Marks always start from the ORIGINAL image. If it was cleaned up after upload, download it when online. */
+  async function openEditor(p: LocalPhoto) {
+    setError(null);
+    const original = p.annotatedFrom ? photos.find((x) => x.id === p.annotatedFrom) ?? (await ctx.db.get("photos", p.annotatedFrom)) : p;
+    if (!original) { setError("The original photo is not on this device."); return; }
+    let source = photoSourceBlob(original);
+    if (!source && supabase && navigator.onLine) {
+      const { data } = await supabase.storage.from("audit-photos").download(original.storagePath);
+      if (data) source = data;
+    }
+    if (!source) { setError("This photo is no longer stored on the device. Connect to the internet to mark it up."); return; }
+    setEditing({ original, source, initial: p.annotatedFrom ? p.annotations ?? [] : [] });
+  }
   return (
     <div className="photos">
       <div className="thumbs">
         {photos.map((p) => (
-          <figure key={p.id} data-testid="photo-thumb">
-            <img src={p.thumb} alt="Site photo" width={64} height={64} />
+          <figure key={p.id} data-testid="photo-thumb" data-annotated={p.annotatedFrom ? "yes" : "no"}>
+            <img src={p.thumb} alt={p.annotatedFrom ? "Marked-up site photo" : "Site photo"} width={64} height={64} />
             <figcaption className={p.confirmed ? "ok" : "wait"} data-testid="photo-status">{p.confirmed ? "Uploaded" : "On this device"}</figcaption>
+            {p.annotatedFrom && <figcaption className="muted" data-testid="photo-kind">Marked up</figcaption>}
+            {!disabled && <button className="small" onClick={() => void openEditor(p)} data-testid={p.annotatedFrom ? "edit-marks" : "annotate-btn"}>{p.annotatedFrom ? "Edit marks" : "Mark up"}</button>}
           </figure>
         ))}
       </div>
@@ -91,6 +128,7 @@ function PhotoStrip({ ctx, auditId, itemKey, photos, disabled }: { ctx: AppCtx; 
         </label>
       )}
       {error && <p className="chip bad" role="alert">{error}</p>}
+      {editing && <AnnotateModal ctx={ctx} source={editing.source} original={editing.original} initial={editing.initial} onClose={() => setEditing(null)} />}
     </div>
   );
 }
@@ -104,7 +142,7 @@ function hints(item: LocalItem, have: number): string[] {
   return out;
 }
 
-function ItemCard({ ctx, item, photos, locked }: { ctx: AppCtx; item: LocalItem; photos: LocalPhoto[]; locked: boolean }) {
+function ItemCard({ ctx, item, photos, locked, photosDisabled }: { ctx: AppCtx; item: LocalItem; photos: LocalPhoto[]; locked: boolean; photosDisabled: boolean }) {
   return (
     <div className="item" data-testid={`item-${item.itemKey}`}>
       <h3>{item.label}{item.critical && <span className="chip bad small-chip"> critical</span>}</h3>
@@ -112,9 +150,11 @@ function ItemCard({ ctx, item, photos, locked }: { ctx: AppCtx; item: LocalItem;
         <span className={`chip ${chipFor(item.result)}`} data-testid={`result-${item.itemKey}`}>{item.result === "NOT_ENTERED" ? "Not entered" : item.result === "NOT_APPLICABLE" ? "N/A" : item.result}</span>{" "}
         {item.pending ? <span className="chip warn" data-testid={`pending-${item.itemKey}`}>Waiting to sync</span> : item.result !== "NOT_ENTERED" ? <span className="chip good" data-testid={`synced-${item.itemKey}`}>Synced</span> : null}
       </p>
-      {hints(item, photos.length).map((h) => <p key={h} className="hint">{h}</p>)}
+      {item.resultAt && <p className="muted small" data-testid={`recorded-${item.itemKey}`}>Recorded by {item.resultBy || "unknown"} · {fmtWhen(item.resultAt)}</p>}
+      {item.issueAt && <p className="issue small" data-testid={`issue-${item.itemKey}`}>Issue raised by {item.issueBy || "unknown"} · {fmtWhen(item.issueAt)}</p>}
+      {!locked && hints(item, photos.filter((p) => !p.annotatedFrom).length).map((h) => <p key={h} className="hint">{h}</p>)}
       {item.kind === "tolerance" ? <MeasurementForm ctx={ctx} item={item} locked={locked} /> : <CheckForm ctx={ctx} item={item} locked={locked} />}
-      <PhotoStrip ctx={ctx} auditId={item.auditId} itemKey={item.itemKey} photos={photos} disabled={false} />
+      <PhotoStrip ctx={ctx} auditId={item.auditId} itemKey={item.itemKey} photos={photos} disabled={photosDisabled} />
     </div>
   );
 }
@@ -189,12 +229,30 @@ function MeasurementForm({ ctx, item, locked }: { ctx: AppCtx; item: LocalItem; 
 
 function SubmitPanel({ ctx, auditId, locked, ready }: { ctx: AppCtx; auditId: string; locked: boolean; ready: Awaited<ReturnType<typeof auditReadiness>> }) {
   const [confirming, setConfirming] = useState(false);
+  const [revising, setRevising] = useState(false);
+  const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
   if (locked) {
+    async function revise() {
+      const r = await reviseAudit(mkCtx(ctx), { auditId, reason });
+      if (!r.ok) { setError(r.error.message); return; }
+      setRevising(false); setReason(""); void ctx.sync();
+    }
     return (
       <section className="card" data-testid="submitted-panel">
         <h2>Submitted</h2>
         <p>This audit is read-only. A manager decides whether installation can be released{ready.state === "not_ready" ? ", and a documented override is required because a critical item failed" : ""}.</p>
+        <p className="muted small">Found a mistake or the site changed? Revising keeps this version as the permanent record and starts a new version you can correct. Any earlier release or override does not carry over.</p>
+        {!revising ? (
+          <button onClick={() => setRevising(true)} data-testid="revise-audit">Revise audit…</button>
+        ) : (
+          <>
+            <label>Why are you revising this audit?<input value={reason} onChange={(e) => setReason(e.target.value)} data-testid="revise-reason-input" /></label>
+            <button className="primary" disabled={!reason.trim()} onClick={revise} data-testid="confirm-revise">Start revision</button>
+            <button onClick={() => { setRevising(false); setError(null); }}>Cancel</button>
+          </>
+        )}
+        {error && <p className="chip bad" role="alert">{error}</p>}
       </section>
     );
   }
@@ -212,7 +270,7 @@ function SubmitPanel({ ctx, auditId, locked, ready }: { ctx: AppCtx; auditId: st
         <button className="primary" onClick={() => setConfirming(true)} data-testid="submit-audit">Submit audit…</button>
       ) : (
         <>
-          <p><strong>Submit now?</strong> After submitting you cannot change results. Photos still on this device will finish uploading.</p>
+          <p><strong>Submit now?</strong> After submitting you cannot change results (you can start a revision). Photos still on this device will finish uploading.</p>
           <button className="primary" onClick={submit} data-testid="confirm-submit">Yes, submit</button>
           <button onClick={() => setConfirming(false)}>Cancel</button>
         </>
