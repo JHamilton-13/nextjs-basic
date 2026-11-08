@@ -61,6 +61,9 @@ export async function pullAuditStates(sb: SupabaseClient, db: Db, outbox: Outbox
 
 export interface SyncResult extends DrainSummary { pulled: boolean; error?: string }
 
+/** A failure that means "cannot reach the server" (as opposed to the server refusing something). */
+export const looksLikeNetworkFailure = (m: string): boolean => /failed to fetch|network|load failed|timed out|timeout|abort|offline|disconnected/i.test(m);
+
 export async function syncNow(deps: { sb: SupabaseClient; db: Db; outbox: Outbox }, o: { ignoreBackoff?: boolean } = {}): Promise<SyncResult> {
   const { sb, db, outbox } = deps;
   await outbox.recover();
@@ -73,6 +76,8 @@ export async function syncNow(deps: { sb: SupabaseClient; db: Db; outbox: Outbox
     await pullCache(sb, db);
     return { ...sum, pulled: true };
   } catch (e) {
-    return { ...sum, pulled: false, error: e instanceof Error ? e.message : String(e) };
+    const error = e instanceof Error ? e.message : String(e);
+    // The phone's own "am I online" flag is unreliable (it says yes on Wi-Fi with no internet), so go by what actually failed.
+    return { ...sum, pulled: false, error, networkDown: looksLikeNetworkFailure(error) };
   }
 }

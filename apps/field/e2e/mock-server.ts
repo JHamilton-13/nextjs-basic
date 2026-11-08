@@ -25,7 +25,7 @@ let storageDown = false;
 
 let state: ServerState = emptyServerState();
 const log: { opId: string; entity: string; entityId: string; baseVersion: number; outcome: string }[] = [];
-let dropNext = 0; let down = false;
+let dropNext = 0; let down = false; let hang = false;
 const plog = (kind: string, extra: Record<string, unknown> = {}) => log.push({ opId: String(extra.id ?? kind), entity: kind, entityId: String(extra.id ?? ''), baseVersion: 0, outcome: kind, ...extra } as never);
 
 const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "GET,POST,OPTIONS,PATCH", "access-control-expose-headers": "*" };
@@ -65,10 +65,11 @@ http.createServer((req, res) => {
   req.on("end", () => {
     const raw = Buffer.concat(chunks); const body = raw.toString("utf8");
     if (url.pathname === "/__state") return send(res, 200, { log, versions: state.versions });
-    if (url.pathname === "/__control") { const c = JSON.parse(body || "{}"); if (c.dropNextResponses !== undefined) dropNext = c.dropNextResponses; if (c.down !== undefined) down = c.down; if (c.storageDown !== undefined) storageDown = c.storageDown; return send(res, 200, { dropNext, down, storageDown }); }
+    if (url.pathname === "/__control") { const c = JSON.parse(body || "{}"); if (c.dropNextResponses !== undefined) dropNext = c.dropNextResponses; if (c.down !== undefined) down = c.down; if (c.storageDown !== undefined) storageDown = c.storageDown; if (c.hang !== undefined) hang = c.hang; return send(res, 200, { dropNext, down, storageDown, hang }); }
     if (url.pathname === "/__photos") return send(res, 200, { photos: [...photos.values()], objects: Object.fromEntries(objects) });
     if (url.pathname === "/__rows") return send(res, 200, Object.fromEntries(rows));
     if (down) { res.destroy(); return; }
+    if (hang) { return; } // accept the connection and never answer: the "Wi-Fi without internet" case
     if (url.pathname.startsWith("/auth/v1/user")) return send(res, 200, { id: USER, aud: "authenticated", email: "installer@phc.test" });
     if (url.pathname.startsWith("/auth/v1/token")) return send(res, 200, { access_token: TOKEN, token_type: "bearer", expires_in: 3600, refresh_token: "r2", user: { id: USER, email: "installer@phc.test" } });
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(res, 401, { code: "PGRST301", message: "JWT expired" });

@@ -24,6 +24,9 @@ Last updated: 2026-11-08
 ## Completed (Step 5, 2026-11-08: revise, annotation, who/when — AWAITING OWNER REVIEW; migration 1100 NOT applied)
 - Offline revise (version n+1, results and who/when carried over, earlier version read-only), version tabs, photo mark-up editor (pen, highlighter, text; editable vector marks; flattened annotated COPY; original untouched), who/when on every result, issue and the audit (none on photos), device-database upgrade v3. 77 field unit tests + 74-check offline Playwright run + 276 DB assertions. See `docs/testing/step5-revise-annotate-results.md`.
 
+## Completed (Step 6, 2026-11-08: phone readiness — AWAITING the real-phone trial)
+- Emulated phone checks (iPhone SE/13, Pixel 7): layout, 44 px tap targets, touch drawing, 12 MP photo with rotation flag, offline reload, Wi-Fi-without-internet. Fixed an unusable annotation editor on small phones, tap sizes, a visible hidden file input, request deadlines, library retry storms, offline badge accuracy; added persistent-storage request + storage readout + install help. 105 phone checks; main run 74. See `docs/testing/step6-phone-readiness-results.md` and the trial kit `docs/testing/phone-trial.md`.
+
 ## Not started
 - `packages/integration-contract` is a bare `package.json` stub. `apps/web` is still the unmodified Next.js starter (relocated); the manager dashboard is not built.
 - PWA: in-app notifications inbox, conflict resolution screen, more annotation tools (arrow/shapes/eraser/zoom), real-device trial. Manager release/override screens and dashboard (apps/web).

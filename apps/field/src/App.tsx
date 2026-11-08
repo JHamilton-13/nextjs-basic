@@ -5,6 +5,7 @@ import { supabase, configured } from "./lib/supabase";
 import { supabaseTransport } from "./lib/transport";
 import { resolveIdentity } from "./lib/auth";
 import { syncNow, type SyncResult } from "./lib/sync";
+import { requestPersistence } from "./lib/storage";
 import type { Identity } from "./lib/types";
 import { SignIn } from "./ui/SignIn";
 import { Projects } from "./ui/Projects";
@@ -40,6 +41,8 @@ export function App() {
   }, [db]);
 
   useEffect(() => { void openPhcDb().then(setDb); }, []);
+  // First run after sign-in: ask the browser to keep our offline data (it may say no; the Sync queue screen shows the result).
+  useEffect(() => { if (identity) void requestPersistence(); }, [identity]);
   useEffect(() => {
     if (!db) return;
     const refresh = () => resolveIdentity(supabase, db).then((r) => { setIdentity(r.identity); setHasSession(r.hasSession); });

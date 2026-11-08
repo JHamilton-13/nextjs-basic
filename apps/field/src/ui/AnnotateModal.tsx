@@ -15,6 +15,7 @@ const TEXT_SIZES = [0.035, 0.05, 0.075];        // text height as a fraction of 
  */
 export function AnnotateModal({ ctx, source, original, initial, onClose }: { ctx: AppCtx; source: Blob; original: LocalPhoto; initial: Shape[]; onClose: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
+  const wrap = useRef<HTMLDivElement>(null);
   const img = useRef<HTMLImageElement | null>(null);
   const live = useRef<Pt[] | null>(null);
   const [shapes, setShapes] = useState<Shape[]>(initial);
@@ -41,6 +42,20 @@ export function AnnotateModal({ ctx, source, original, initial, onClose }: { ctx
     im.src = url;
     return () => URL.revokeObjectURL(url);
   }, [source]);
+
+  // Size the canvas by measuring the space left between the bar and the tools (percent heights are unreliable on iOS Safari),
+  // keeping the photo's aspect ratio. Re-fit when the phone rotates or the on-screen keyboard changes the height.
+  useEffect(() => {
+    const fit = () => {
+      const c = canvas.current; const w = wrap.current; if (!c || !w || !c.width || !c.height) return;
+      const s = Math.min(w.clientWidth / c.width, w.clientHeight / c.height);
+      c.style.width = `${Math.max(1, Math.floor(c.width * s))}px`; c.style.height = `${Math.max(1, Math.floor(c.height * s))}px`;
+    };
+    fit();
+    const ro = new ResizeObserver(fit); if (wrap.current) ro.observe(wrap.current);
+    window.addEventListener("orientationchange", fit);
+    return () => { ro.disconnect(); window.removeEventListener("orientationchange", fit); };
+  }, [ready]);
 
   function paint(extra?: Shape) {
     const c = canvas.current; const im = img.current; if (!c || !im) return;
@@ -102,23 +117,29 @@ export function AnnotateModal({ ctx, source, original, initial, onClose }: { ctx
         <strong>Mark up photo</strong>
         <button className="primary" disabled={!ready || saving || shapes.length === 0} onClick={save} data-testid="save-annotation">{saving ? "Saving…" : "Save copy"}</button>
       </div>
-      <div className="canvas-wrap"><canvas ref={canvas} className="annot" data-testid="annotate-canvas" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} /></div>
+      <div className="canvas-wrap" ref={wrap}><canvas ref={canvas} className="annot" data-testid="annotate-canvas" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up} /></div>
       {pending && (
         <div className="textrow">
           <input autoFocus placeholder="Type a short note" maxLength={200} value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") addText(); }} data-testid="text-input" />
           <button className="primary" onClick={addText} data-testid="text-add">Add</button>
         </div>
       )}
-      <div className="tools">
-        {(["pen", "highlight", "text"] as Tool[]).map((t) => (
-          <button key={t} className={tool === t ? "on" : ""} onClick={() => { setTool(t); setPending(null); }} data-testid={`tool-${t}`}>{t === "pen" ? "Pen" : t === "highlight" ? "Highlighter" : "Text"}</button>
-        ))}
-        <span className="swatches">{PALETTE.map((c, i) => <button key={c} aria-label={`Color ${i + 1}`} className={`sw ${colorIdx === i ? "on" : ""}`} style={{ background: c }} onClick={() => setColorIdx(i)} data-testid={`color-${i}`} />)}</span>
-        <span>{["Thin", "Medium", "Thick"].map((l, i) => <button key={l} className={thick === i ? "on" : ""} onClick={() => setThick(i)} data-testid={`thick-${i}`}>{l}</button>)}</span>
-        <button disabled={shapes.length === 0} onClick={() => setShapes((s) => s.slice(0, -1))} data-testid="undo">Undo</button>
-        <button disabled={shapes.length === 0} onClick={() => setShapes([])}>Clear</button>
+      <div className="tools" data-testid="tools">
+        <div className="toolrow">
+          {(["pen", "highlight", "text"] as Tool[]).map((t) => (
+            <button key={t} className={tool === t ? "on" : ""} onClick={() => { setTool(t); setPending(null); }} data-testid={`tool-${t}`}>{t === "pen" ? "Pen" : t === "highlight" ? "Highlight" : "Text"}</button>
+          ))}
+          <button disabled={shapes.length === 0} onClick={() => setShapes((s) => s.slice(0, -1))} data-testid="undo">Undo</button>
+        </div>
+        <div className="toolrow">
+          {PALETTE.map((c, i) => <button key={c} aria-label={`Color ${i + 1}`} className={`sw ${colorIdx === i ? "on" : ""}`} style={{ background: c }} onClick={() => setColorIdx(i)} data-testid={`color-${i}`} />)}
+        </div>
+        <div className="toolrow">
+          {["Thin", "Medium", "Thick"].map((l, i) => <button key={l} className={thick === i ? "on" : ""} onClick={() => setThick(i)} data-testid={`thick-${i}`}>{l}</button>)}
+          <button disabled={shapes.length === 0} onClick={() => setShapes([])}>Clear</button>
+        </div>
       </div>
-      <p className="muted small">The original photo is never changed. Saving creates a marked-up copy.</p>
+      <p className="muted small note">The original photo is never changed. Saving creates a marked-up copy.</p>
       {error && <p className="chip bad" role="alert">{error}</p>}
     </div>
   );

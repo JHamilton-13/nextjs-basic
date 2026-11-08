@@ -10,7 +10,8 @@
     "preview": "vite preview --port 4173 --strictPort",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "e2e": "node e2e/offline.e2e.cjs"
+    "e2e": "node e2e/offline.e2e.cjs",
+    "e2e:phone": "node e2e/phone.e2e.cjs"
   },
   "dependencies": {
     "@phc/domain": "*",

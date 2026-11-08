@@ -13,7 +13,7 @@ function classify(f: Failure): TransportError {
   const code = f.code ?? "";
   const status = f.status ?? 0;
   if (status === 0 && !code) return new TransportError("network", msg, true);
-  if (/failed to fetch|network|load failed/i.test(msg) && !code) return new TransportError("network", msg, true);
+  if (/failed to fetch|network|load failed|timed out|timeout|abort/i.test(msg) && !code) return new TransportError("network", msg, true);
   if (status === 401 || code === "28000" || /jwt|not authenticated/i.test(msg)) return new TransportError("auth", msg, true);
   if (status >= 500) return new TransportError("server", msg, true);
   return new TransportError("server", msg, false); // e.g. 42501 permission denied, size_mismatch: retrying cannot help

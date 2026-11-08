@@ -5,7 +5,8 @@ const QUALITY = 0.8;
 
 /** Browser compressor: decodes the camera file, scales the long edge to 2048 px, encodes JPEG, and makes a 160 px preview. */
 export const browserCompress: Compressor = async (file) => {
-  const bmp = await createImageBitmap(file);
+  // 'from-image': honour the camera's rotation flag (EXIF) so a portrait shot is not stored sideways
+  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" });
   const scale = Math.min(1, MAX_EDGE / Math.max(bmp.width, bmp.height));
   const draw = (w: number, h: number) => { const c = document.createElement("canvas"); c.width = w; c.height = h; c.getContext("2d")!.drawImage(bmp, 0, 0, w, h); return c; };
   const main = draw(Math.max(1, Math.round(bmp.width * scale)), Math.max(1, Math.round(bmp.height * scale)));
@@ -21,7 +22,7 @@ import { drawShapes, type Shape } from "./annotations";
 
 /** Draws the marks onto the image at its own resolution (long edge capped at 2048 px) and encodes the flattened JPEG for reports. */
 export async function flattenAnnotated(base: Blob, shapes: Shape[]): Promise<{ blob: Blob; thumb: string; mime: string }> {
-  const bmp = await createImageBitmap(base);
+  const bmp = await createImageBitmap(base, { imageOrientation: "from-image" });
   const scale = Math.min(1, MAX_EDGE / Math.max(bmp.width, bmp.height));
   const w = Math.max(1, Math.round(bmp.width * scale)); const h = Math.max(1, Math.round(bmp.height * scale));
   const c = document.createElement("canvas"); c.width = w; c.height = h;

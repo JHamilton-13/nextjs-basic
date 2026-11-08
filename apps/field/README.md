@@ -32,6 +32,7 @@ Add the dev/preview URL to Supabase > Authentication > URL Configuration for Goo
 
 ## Tests
 - `npm test -w @phc/field` — outbox (lanes, dependencies, backoff, recovery), audits, photos, checks, submit, readiness against fake-indexeddb.
+- `npm run e2e:phone -w @phc/field` — emulated iPhone SE / iPhone 13 / Pixel 7 (touch, tap sizes, layout, 12 MP photo, lie-fi). Not a substitute for a real phone; see `docs/testing/phone-trial.md`.
 - `npm run e2e -w @phc/field` — real Chromium + service worker + IndexedDB with the network switched off, against a local mock of Supabase
   (`e2e/mock-server.ts`, which reuses the domain package's reference model of `apply_op` and the real example template). It cannot test real
   sign-in (needs an emailed code) or a real phone.
