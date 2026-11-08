@@ -8,15 +8,19 @@ Last updated: 2026-11-08
 - **Step 2 — database (approved and APPLIED to Supabase project `zuyzxkkmsyuybbznelql` on 2026-11-08).** 9 migrations in `supabase/migrations/`, example seed in `supabase/seed.sql` (NOT applied), tests in `supabase/tests/`: 235 assertions + 2 real-concurrency checks on local Postgres 16; remote structure, advisors and function behaviour verified read-only. No data has been written to the real project. See `docs/DATABASE_SCHEMA.md` and `docs/testing/step2-database-results.md`.
 
 ## In progress
-- Step 3 (installer PWA scaffold + thin vertical slice) started 2026-11-08. Sign-in gate, first invite and first admin are DONE and verified live (see `docs/testing/step2-database-results.md`).
+- Step 3 vertical slice built and tested 2026-11-08 (AWAITING OWNER REVIEW and a first real-device/real-sign-in trial). Sign-in gate, first invite and first admin are DONE and verified live (see `docs/testing/step2-database-results.md`).
 
 ## Owner dashboard setup (DONE 2026-11-08: hook enabled, Google + Email on, anonymous off). Original checklist:
 1. Authentication > Hooks: enable **Before User Created** -> `public.hook_before_user_created`. UNTIL THIS IS ON, anyone can create an auth account if a sign-in provider is enabled (they still see no data, because RLS requires an active invite, but do not leave it off).
 2. Authentication > Providers: enable Google (create the OAuth client in Google Cloud; secrets go in Supabase only) and Email OTP; turn OFF anonymous sign-ins.
 3. Tell me the exact Google email you will sign in with so I can create your invite and, after your first sign-in, set `is_admin`.
 
+## Completed (Step 3)
+- `apps/field` installable PWA: sign-in UI (Google + email code), offline cache of projects/rooms/templates, start audit offline, tolerance measurement with live PASS/REVIEW/FAIL, durable ordered outbox with backoff and recovery, server-confirmed sync, sync/queue screen. 23 unit tests + 23-check offline Playwright run, typecheck clean. See `docs/testing/step3-pwa-results.md` and `apps/field/README.md`.
+
 ## Not started
-- Step 3: `apps/field` PWA scaffold + thin vertical slice; Playwright offline test. `apps/field` and `packages/integration-contract` are bare `package.json` stubs.
+- `packages/integration-contract` is a bare `package.json` stub. `apps/web` is still the unmodified Next.js starter (relocated); the manager dashboard is not built.
+- PWA: photos, check/observation/MEP entry, submit/release/override screens, conflict resolution, real-device trial.
 - Enabling the auth hook, Google/email OTP setup, first-admin bootstrap (steps in `supabase/README.md`); inserting the company's real audit template.
 
 ## Blockers
@@ -41,4 +45,5 @@ Last updated: 2026-11-08
 - `npm audit` reports advisories in the Next.js 14.2.5 starter tree; not addressed.
 - Notifications are rows + queued email records only; no sender exists yet.
 - Supabase performance advisor items (empty DB now): add indexes on FK columns, wrap `auth.uid()` as `(select auth.uid())` in policies, merge the two `rooms` SELECT policies.
+- PWA debt: no a11y audit; token-expiry-offline path untested; no background sync on iOS (drains on foreground); iOS storage limits unverified.
 - PR #1 carries spec, domain package and database work together (owner chose not to split).
