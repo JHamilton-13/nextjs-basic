@@ -24,9 +24,10 @@ Date: 2026-11-08. All data is fake. **Migration 1700 is written and tested local
 - Loading `@react-pdf/renderer` from a CommonJS TypeScript function fails (`ERR_PACKAGE_PATH_NOT_EXPORTED`), which is how Vercel would have compiled a plain `api/reports.ts`. Fixed by shipping a generated single-file ES module and testing it in plain Node.
 - `nodemailer/lib/mail-composer` needs the explicit `/index.js` path in an ES module.
 - "Save contact" showed enabled for a moment after saving (Pixel 7 run): the saved message now appears after the data reloads.
+- First Vercel preview: the function crashed on load (`Cannot find module .../pdfkit/js/standard-fonts/Helvetica.cjs`), because Vercel's file tracer misses pdfkit's dynamically loaded font files. Reproduced locally by tracing with `@vercel/nft` (see `docs/ops/vercel-function-check.md`); fixed with `includeFiles` in `vercel.json`. The rebuilt preview answers `GET /api/reports` with `405 {"error":"method_not_allowed"}`, i.e. the function now loads on Vercel.
 - `installer-view` e2e raced a redirect with a navigation (failed on the previous code too): it now waits for the redirect.
 
 ## Not done / not verified
 - Migration 1700 not applied; the adapters and the storage policies have not run against the real Supabase (Step 6 after approval).
-- The function has not run on Vercel yet (module loading is verified in plain Node only); Gmail has never been called.
+- On Vercel the function loads and refuses a GET correctly, but a real build or send has not run there (needs migration 1700 and a manager session). Gmail has never been called.
 - Trade-list editing screen not built (trades are still changed in the database).
