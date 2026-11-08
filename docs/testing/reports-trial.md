@@ -1,0 +1,87 @@
+# Reports trial: real phone and real database (PROMPT 02 step 6)
+
+Run this on the **preview** (`https://nextjs-basic-git-claude-foundation-audit-spec-phc3.vercel.app`) with the **trial project only**.
+Use only fake names and your OWN mailbox as the "builder". Nothing in this script emails a real builder.
+Tick each line; write what you saw next to anything that is not as described and send me the sheet. Then I check the database side
+(audit log, report rows, storage) and record the results in `docs/testing/step12-reports-trial-results.md`.
+
+Sign in as a user who is an admin or a production, project or installation manager of the trial project. Keep a second phone or a
+private window signed in as an installer of the same project for part F.
+
+## A. Set up the trial data (installer screens, about 10 minutes)
+1. [ ] Open the trial project. In **Kitchen** raise three **Pre-Install Corrections** (Add issue, Pre-Install Corrections):
+   - "Supply line off by 2 in." trade **Plumbing**, with 2 photos, mark up one photo with the pen and text.
+   - "No outlet on island wall" trade **Electrical**, 1 photo.
+   - "Wall bowed at pantry" trade **Framing**, 3 photos. Then **Complete** this one.
+2. [ ] In **Bath 1** raise one Pre-Install Correction, trade **Windows**, no photo. Then raise a second, **Void** it (it must never appear in the PDF).
+3. [ ] In Bath 1 raise one **Punch Item** (Service). It must not appear in the builder PDF.
+4. [ ] Kitchen checklist: tick every item Done or N/A. Bath 1: tick two items Done, mark "Finished toes" **Not done** with the note "After floor install, after 11/5".
+5. [ ] Wait for "All synced" on the phone.
+
+## B. Reports screen, before any email settings exist
+6. [ ] Project screen shows **Reports and builder contact** (managers only). The installer phone does not show it.
+7. [ ] Room status: rooms fold (tap a name to open); Kitchen **Completed**, Bath 1 **Not completed** with the "Finished toes: After floor install, after 11/5" note and the open-issue counts you expect (Kitchen 2 open, Bath 1 1 or 2 open depending on step 2/3).
+8. [ ] Builder contact: if the job came from Cockpit the fields are pre-filled and say so; edit one, Save: the note changes to "Entered by hand" and the audit rebuilds. Type a bad email, see the error and Save disabled. Enter name `TEST Builder`, **your own email**, a fake address, Save. Reload the page: the values are still there.
+9. [ ] Opening Reports **builds the site audit by itself from the latest data**. The message says 2 or 3 identified, 1 or 2 incomplete (voided issues, Punch Items and Touch-ups are excluded: the builder PDF is Pre-Install Corrections only). One row appears, labelled **Preview, not saved**. Raise one more Pre-Install Correction on another phone, come back to Reports and press **Rebuild site audit**: the new issue is in the PDF and there is still only ONE audit preview (the old one is gone).
+10. [ ] **Preview PDF** opens. Check against `docs/testing/images/builder-audit-sample.pdf`:
+    - [ ] cover: logo, job name, gold rule, date, "Prepared For TEST Builder", address, counts
+    - [ ] rooms with a gold divider, trade badge, "Raised by: <initials> <m/d>", description
+    - [ ] photos two across, numbered, each with a time and date stamp; the marked-up photo shows your pen and text
+    - [ ] the voided issue and the Punch Item are NOT there; no room details or gate codes anywhere
+    - [ ] page numbers "Page X of Y"
+11. [ ] **Create status PDF**, preview it, press **Print** (it opens the PDF and marks it Printed). Build and print another: only ONE status report stays, labelled Printed. Preview it: Kitchen Completed, Bath 1 Not completed with the note.
+12. [ ] Press **Send test to me**. Expected: the plain message that sending is not set up yet (it names the email settings). Nothing is emailed and the report stays Ready to send.
+
+## B2. Report builder, markup and archive (needs migration 1900 applied; no email settings needed)
+20. [ ] Markup: open a photo's **Mark up**. The tool row reads **Pen, Marker, Text, ⌫ Eraser, Undo**. Tap Eraser: a hint appears over the photo. Drag across a mark: it disappears; Undo brings it back. (On the Sync queue screen, "App version" shows which build the phone is running. If it is not the newest, close the app completely and reopen it.)
+21. [ ] Save the markup. The issue now shows only the marked-up photo, with **Show 1 archived original**. Tap it: the original appears, labelled "Original (archived)", with no Mark up button.
+22. [ ] Reports > Build a report. Tap **Service report**: Punch, Missing and Damaged are ticked, Open and completed, no room status. Tick Touch-Ups: the type switches to Custom. Tap **Original photos only**: marked-up becomes unticked (one or the other). Untick everything with room status "Do not show": a message says what to choose and Build is disabled.
+23. [ ] Build a Service report. Open the PDF: every room's Punch / Missing / Damaged items are listed (completed rooms too), each with its kind, "Completed m/d" on completed ones, photos as chosen. Rooms with nothing are left out; tick "Also list rooms with nothing to show" and rebuild: they appear with "Nothing to list".
+24. [ ] Build **Room status** with "Rooms not completed only": completed rooms are not on the PDF; with "All rooms" they appear as Completed. There are no counts at the end of rows.
+25. [ ] Build the same report with Marked-up photos, then with Original photos only: the PDF shows one kind or the other, never both.
+26. [ ] **Email colleagues**: type a non-PHC address: refused with the reason. Type two PHC addresses: each gets a copy marked internal, the report shows **Shared**, and the builder send is still available. Do it again: it works again.
+
+## C. After the owner adds the Vercel settings (see `docs/ops/gmail-send-setup.md`) and redeploys
+13. [ ] **Send test to me**: a mail arrives in YOUR mailbox, subject starts `TEST`, the PDF is attached and opens. The report is still Ready to send.
+14. [ ] **Send to builder**: the confirm box shows `TEST Builder (your email)` and "only be sent once". Press Cancel: nothing sent.
+15. [ ] Press Send to builder, then **Yes, send** (try a quick double tap). Exactly ONE mail arrives. The row shows **Sent** and has no Send button.
+16. [ ] Rebuild, send again to yourself (Retry/Send to builder): afterwards only ONE site audit remains (the newest Sent); the older Sent one is gone. Reload the page: still Sent. Open the PDF from the email: it matches the preview.
+17. [ ] Build a second audit, turn **airplane mode on**, reload the Reports screen: it says reports need a connection. Turn it off: the screen returns.
+
+## D. Who can and cannot (installer phone)
+18. [ ] Installer: no Reports button on the project. Paste `/api/reports` into the browser: it says "Use POST" (never a page of errors).
+19. [ ] Installer can still see the issues and checklist as before (nothing broken).
+
+## E. What I check in the database afterwards (no action for you)
+- At most one saved (sent or printed) report per kind; no old previews; no stray PDFs in the `reports` bucket.
+- `reports` rows: statuses, recipient, who, when, `message_id`; only the one real send is `sent`.
+- `audit_log` rows for build, queue and sent, each with the project id.
+- Storage: PDFs under `<project id>/<report id>.pdf` in the private `reports` bucket; none readable without a manager session.
+- Security advisor after the trial.
+
+## Results sheet
+| # | Result (ok / what happened) |
+| --- | --- |
+| 20 |  |
+| 21 |  |
+| 22 |  |
+| 23 |  |
+| 24 |  |
+| 25 |  |
+| 26 |  |
+| 6 |  |
+| 7 |  |
+| 8 |  |
+| 9 |  |
+| 10 |  |
+| 11 |  |
+| 12 |  |
+| 13 |  |
+| 14 |  |
+| 15 |  |
+| 16 |  |
+| 17 |  |
+| 18 |  |
+| 19 |  |
+
+Anything odd, also send a screenshot and the time you saw it (I can look up that request in the Vercel logs).

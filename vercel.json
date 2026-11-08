@@ -1,0 +1,52 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "npm run build -w @phc/field",
+  "framework": null,
+  "installCommand": "npm install",
+  "outputDirectory": "apps/field/dist",
+  "rewrites": [
+    {
+      "source": "/((?!api/|assets/|sw\\.js|workbox-.*\\.js|manifest\\.webmanifest|icon.*).*)",
+      "destination": "/index.html"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
+    },
+    {
+      "source": "/index.html",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache"
+        }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        },
+        {
+          "key": "Referrer-Policy",
+          "value": "strict-origin-when-cross-origin"
+        }
+      ]
+    }
+  ],
+  "functions": {
+    "api/reports.mjs": {
+      "maxDuration": 60,
+      "includeFiles": "{packages/reports/assets/**,node_modules/pdfkit/js/**}"
+    }
+  }
+}
