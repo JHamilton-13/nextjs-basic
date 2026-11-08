@@ -13,7 +13,7 @@ export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 export type PhotoError = { code: "audit_not_found" | "unknown_item" | "compress_failed" | "file_too_large"; message: string };
 
-const hex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+export const hex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 
 /**
  * Saves a photo on the device and queues its three server steps: register the row (data lane), upload the file and

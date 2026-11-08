@@ -41,9 +41,9 @@ describe("device database upgrade v2 -> v3 (version-aware audits)", () => {
     expect(q[0]?.op.opId).toBe("o1"); expect(q[0]?.state.status).toBe("pending");
     expect(await db.get("meta", "identity")).toMatchObject({ userId: "u1" });
   });
-  it("a fresh install gets every store directly (v4 adds room_checks)", async () => {
+  it("a fresh install gets every store directly (v4 adds room_checks, v5 adds trades and issues)", async () => {
     const db = await openPhcDb("fresh-1");
-    expect([...db.objectStoreNames].sort()).toEqual(["audits", "items", "meta", "outbox", "photos", "projects", "room_checks", "rooms", "templates"]);
+    expect([...db.objectStoreNames].sort()).toEqual(["audits", "issues", "items", "meta", "outbox", "photos", "projects", "room_checks", "rooms", "templates", "trades"]);
     await db.put("audits", { key: "X:2", auditId: "X", version: 2, projectId: "P", roomId: null, templateId: "T", createdBy: "u", createdByLabel: "U", createdAt: "t" });
     expect((await db.getAllFromIndex("audits", "by_audit_id", "X"))[0]?.version).toBe(2);
   });
@@ -59,5 +59,37 @@ describe("device database upgrade v3 -> v4 (room checklist)", () => {
     expect(await db.getAll("outbox")).toHaveLength(1);
     await db.put("room_checks", { key: "R:shelves", roomId: "R", projectId: "P", itemKey: "shelves", state: "done", pending: true, nextBase: 1 });
     expect((await db.getAllFromIndex("room_checks", "by_room", "R"))).toHaveLength(1);
+  });
+});
+
+describe("device database upgrade v4 -> v5 (issues and trades)", () => {
+  it("adds trades, issues and the photo-by-issue index and keeps everything already on the device (including audit photos and queued work)", async () => {
+    await makeV2("upg-v5");
+    (await openPhcDb("upg-v5")).close();                    // v2 -> v5 in one step (passes through v3 and v4)
+    const db = await openPhcDb("upg-v5");
+    expect([...db.objectStoreNames]).toEqual(expect.arrayContaining(["trades", "issues", "room_checks"]));
+    expect(await db.get("audits", "A:1")).toMatchObject({ auditId: "A" });
+    const photos = await db.getAllFromIndex("photos", "by_audit", "A");
+    expect(photos[0]).toMatchObject({ id: "ph1" });
+    expect(photos[0]?.blob?.size).toBe(5);
+    expect(await db.getAll("outbox")).toHaveLength(1);
+    await db.put("trades", { id: "t1", name: "Plumbing", sort_order: 10, active: true });
+    await db.put("issues", { id: "i1", projectId: "P", roomId: "R", kind: "punch_item", tradeId: null, title: "x", description: "", raisedBy: "u", raisedByLabel: "U", raisedAt: "t", pending: true, nextBase: 1 });
+    await db.put("photos", { id: "ip1", auditId: "", issueId: "i1", version: 0, projectId: "P", itemKey: null, thumb: "t", mime: "image/jpeg", bytes: 1, sha256: "a".repeat(64), capturedAt: "t", capturedBy: "u", storagePath: "x", confirmed: false });
+    expect((await db.getAllFromIndex("photos", "by_issue", "i1")).map((p) => p.id)).toEqual(["ip1"]);
+    expect((await db.getAllFromIndex("issues", "by_room", "R")).map((i) => i.id)).toEqual(["i1"]);
+  });
+  it("upgrades a v4 device (with a checklist tick) without losing it", async () => {
+    const old = await openDB("upg-v4only", 4, { upgrade(d) {
+      d.createObjectStore("meta"); d.createObjectStore("projects", { keyPath: "id" }); d.createObjectStore("rooms", { keyPath: "id" }).createIndex("by_project", "project_id"); d.createObjectStore("templates", { keyPath: "id" });
+      d.createObjectStore("audits", { keyPath: "key" }).createIndex("by_audit_id", "auditId"); d.createObjectStore("items", { keyPath: "key" }).createIndex("by_audit", "auditKey");
+      d.createObjectStore("photos", { keyPath: "id" }).createIndex("by_audit", "auditId"); d.createObjectStore("outbox", { keyPath: "seq", autoIncrement: true }).createIndex("by_audit", "auditId");
+      d.createObjectStore("room_checks", { keyPath: "key" }).createIndex("by_room", "roomId");
+    } });
+    await old.put("room_checks", { key: "R:shelves", roomId: "R", projectId: "P", itemKey: "shelves", state: "done", pending: true, nextBase: 1 });
+    old.close();
+    const db = await openPhcDb("upg-v4only");
+    expect(await db.get("room_checks", "R:shelves")).toMatchObject({ state: "done", pending: true });
+    expect([...db.objectStoreNames]).toEqual(expect.arrayContaining(["trades", "issues"]));
   });
 });

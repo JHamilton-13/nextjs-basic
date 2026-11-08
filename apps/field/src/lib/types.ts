@@ -1,4 +1,4 @@
-import type { ClientOpState, OperationEnvelope } from "@phc/domain";
+import type { ClientOpState, IssueKind, OperationEnvelope } from "@phc/domain";
 
 export interface ProjectRow { id: string; name: string; customer: string | null; address: string | null }
 export interface RoomRow {
@@ -7,6 +7,29 @@ export interface RoomRow {
   details?: Record<string, string>;
   /** cockpit | masterfile | warehouse_tracker | manual */
   details_source?: string | null;
+}
+
+export interface TradeRow { id: string; name: string; sort_order: number; active: boolean }
+
+/** One issue on a room (an issue to fix, a missing part, a damaged part...). Voided issues are kept here (for sync) but never shown. */
+export interface LocalIssue {
+  id: string;
+  projectId: string;
+  roomId: string;
+  kind: IssueKind;
+  tradeId: string | null;
+  title: string;
+  description: string;
+  raisedBy: string;
+  raisedByLabel: string;
+  /** When it happened on site (not when it synced). */
+  raisedAt: string;
+  completedBy?: string; completedByLabel?: string; completedAt?: string; completedNote?: string;
+  voidedBy?: string; voidedByLabel?: string; voidedAt?: string; voidNote?: string;
+  /** true while a queued operation for this issue has not been confirmed by the server. */
+  pending: boolean;
+  /** baseVersion for the NEXT operation on this issue (server row_version, plus operations already queued). */
+  nextBase: number;
 }
 
 export type CheckState = "done" | "not_done" | "na";
@@ -103,7 +126,10 @@ export interface LocalItem {
 
 export interface LocalPhoto {
   id: string;
+  /** Empty for a photo that belongs to an issue (see issueId). */
   auditId: string;
+  /** Set when this photo belongs to an issue; the queue group is then the issue's room. */
+  issueId?: string;
   /** Audit version current when the photo was taken. Photos count as evidence for that version and every later one. */
   version: number;
   /** Set when this is an annotated copy: the original photo it was drawn on (the original is never changed). */

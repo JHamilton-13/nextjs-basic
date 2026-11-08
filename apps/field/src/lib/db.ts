@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { Identity, LocalAudit, LocalItem, LocalPhoto, LocalRoomCheck, OutboxRecord, ProjectRow, RoomRow, TemplateRow } from "./types";
+import type { Identity, LocalAudit, LocalItem, LocalIssue, LocalPhoto, LocalRoomCheck, OutboxRecord, ProjectRow, RoomRow, TemplateRow, TradeRow } from "./types";
 
 interface PhcDB extends DBSchema {
   meta: { key: string; value: unknown };
@@ -8,7 +8,9 @@ interface PhcDB extends DBSchema {
   templates: { key: string; value: TemplateRow };
   audits: { key: string; value: LocalAudit; indexes: { by_audit_id: string } };
   items: { key: string; value: LocalItem; indexes: { by_audit: string } };
-  photos: { key: string; value: LocalPhoto; indexes: { by_audit: string } };
+  photos: { key: string; value: LocalPhoto; indexes: { by_audit: string; by_issue: string } };
+  trades: { key: string; value: TradeRow };
+  issues: { key: string; value: LocalIssue; indexes: { by_room: string } };
   room_checks: { key: string; value: LocalRoomCheck; indexes: { by_room: string } };
   outbox: { key: number; value: OutboxRecord; indexes: { by_audit: string } };
 }
@@ -17,7 +19,7 @@ export type Db = IDBPDatabase<PhcDB>;
 
 /** Durable local store. Every write the user makes lands here (and in `outbox`) before any network call. */
 export function openPhcDb(name = "phc-field"): Promise<Db> {
-  return openDB<PhcDB>(name, 4, {
+  return openDB<PhcDB>(name, 5, {
     async upgrade(db, oldVersion, _newVersion, tx) {
       if (oldVersion < 1) {
         db.createObjectStore("meta");
@@ -46,6 +48,12 @@ export function openPhcDb(name = "phc-field"): Promise<Db> {
       }
       // v4: the per-room completion checklist.
       if (oldVersion < 4) db.createObjectStore("room_checks", { keyPath: "key" }).createIndex("by_room", "roomId");
+      // v5: issues (with their photos) and the trade list.
+      if (oldVersion < 5) {
+        db.createObjectStore("trades", { keyPath: "id" });
+        db.createObjectStore("issues", { keyPath: "id" }).createIndex("by_room", "roomId");
+        tx.objectStore("photos").createIndex("by_issue", "issueId");
+      }
     }
   });
 }
@@ -54,13 +62,14 @@ export const getIdentity = async (db: Db): Promise<Identity | undefined> => (awa
 export const setIdentity = (db: Db, i: Identity) => db.put("meta", i, "identity");
 
 /** Replace the cached read-only reference data (projects the user belongs to, their rooms, active templates). */
-export async function replaceCache(db: Db, data: { projects: ProjectRow[]; rooms: RoomRow[]; templates: TemplateRow[] }) {
-  const tx = db.transaction(["projects", "rooms", "templates", "meta"], "readwrite");
-  await Promise.all([tx.objectStore("projects").clear(), tx.objectStore("rooms").clear(), tx.objectStore("templates").clear()]);
+export async function replaceCache(db: Db, data: { projects: ProjectRow[]; rooms: RoomRow[]; templates: TemplateRow[]; trades?: TradeRow[] }) {
+  const tx = db.transaction(["projects", "rooms", "templates", "trades", "meta"], "readwrite");
+  await Promise.all([tx.objectStore("projects").clear(), tx.objectStore("rooms").clear(), tx.objectStore("templates").clear(), ...(data.trades ? [tx.objectStore("trades").clear()] : [])]);
   await Promise.all([
     ...data.projects.map((p) => tx.objectStore("projects").put(p)),
     ...data.rooms.map((r) => tx.objectStore("rooms").put(r)),
     ...data.templates.map((t) => tx.objectStore("templates").put(t)),
+    ...(data.trades ?? []).map((t) => tx.objectStore("trades").put(t)),
     tx.objectStore("meta").put(new Date().toISOString(), "cacheRefreshedAt")
   ]);
   await tx.done;
