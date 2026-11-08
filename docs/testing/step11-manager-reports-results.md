@@ -1,6 +1,6 @@
 # Step 11: manager screens, report building and sending (PROMPT 02 step 5, plan Tasks 5, 6, 7)
 
-Date: 2026-11-08. All data is fake. **Migration 1700 is written and tested locally but NOT applied to the remote project (awaiting owner approval).**
+Date: 2026-11-08. All data is fake. **Migration 1700 was applied to project `zuyzxkkmsyuybbznelql` on 2026-11-08 after owner approval.** Live check: `reports` table with RLS on and one select policy; two `reports_obj_*` storage policies; bucket `reports` private, `application/pdf` only, 18 MB; `create_report`, `queue_report_send`, `mark_report_sent`, `mark_report_failed` executable by `authenticated` and not by `anon`; `authenticated` holds SELECT only on the table; 0 rows. Security advisor: no new findings except the expected "signed-in users can execute SECURITY DEFINER function" notice for the four new functions (same as the existing ones; each checks the caller's role inside).
 
 ## What was built
 - `supabase/migrations/20261108001700_reports.sql` (not applied): `reports` table (manager-only read, no direct writes), private PDF-only `reports` bucket (manager of the project only, no update/delete), functions `create_report`, `queue_report_send`, `mark_report_sent`, `mark_report_failed` (once-only send, failed or 10-minute-stuck reports retry), audit log on every step.
