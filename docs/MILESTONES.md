@@ -27,6 +27,8 @@ Last updated: 2026-11-08
 ## Phone-trial follow-ups (2026-11-08)
 - DONE: erase tool in photo markup (drag removes a whole mark; undo covers erase and clear). Emulated phones 117 checks, offline e2e 74, unit 81.
 - DONE: migration 1200 room details applied live and verified (DB tests 291). Sources: Cockpit, master file, Warehouse Tracker (mock contract only); PHC-only notes are never stored.
+- DONE: migration 1300 per-room checklist applied live and verified (DB tests 313). 11 pills; Done / Not done (note required) / N/A; untick; who and on-site time recorded.
+- Owner decisions 2026-11-08: installer app owns issues and part requests; client signs on the phone/tablet; installers see rooms + details (no audit screens); issue kinds Pre Install Correction / Punch Item / Touch Up plus Missing part and Damaged part; part requests start pre-filled from room details; PHC-only notes hidden.
 - NEXT (owner-approved direction): Cockpit-style look (PHC palette), Projects list + project summary like Site Audit, read-only room detail cards. Part-request editing of details is a later step.
 
 ## Completed (Step 6, 2026-11-08: phone readiness — AWAITING the real-phone trial)
