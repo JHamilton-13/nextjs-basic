@@ -141,5 +141,10 @@ begin
   perform public.confirm_issue_photo(ph);
   perform test.ok(true, 'confirming twice is harmless');
   perform test.as_postgres();
+
+  -- ---- function execute rights (1500): signed-out callers cannot even call the photo functions ----
+  perform test.ok(not has_function_privilege('anon', 'public.confirm_issue_photo(uuid)', 'execute'), 'a signed-out visitor cannot execute confirm_issue_photo');
+  perform test.ok(has_function_privilege('authenticated', 'public.confirm_issue_photo(uuid)', 'execute'), 'a signed-in user can execute confirm_issue_photo');
+  perform test.ok(not has_function_privilege('anon', 'public.apply_op(jsonb)', 'execute'), 'a signed-out visitor cannot execute apply_op');
 end $$;
 rollback;

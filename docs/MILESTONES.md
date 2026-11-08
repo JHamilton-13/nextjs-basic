@@ -30,6 +30,7 @@ Last updated: 2026-11-08
 - DONE: migration 1300 per-room checklist applied live and verified (DB tests 313). 11 pills; Done / Not done (note required) / N/A; untick; who and on-site time recorded.
 - Owner decisions 2026-11-08: installer app owns issues and part requests; client signs on the phone/tablet; installers see rooms + details (no audit screens); issue kinds Pre Install Correction / Punch Item / Touch Up plus Missing part and Damaged part; part requests start pre-filled from room details; PHC-only notes hidden.
 - DONE (Step 7): installer rooms + details + 11-pill checklist built; audit screens hidden from installers (kept behind VITE_SHOW_AUDIT). Results in docs/testing/step7-rooms-checklist-results.md. Tests: unit 92, domain 122, DB 313, phone 180, offline 74, installer-build 7.
+- DONE: migration 1400 room issues + issue photos applied live and verified (DB tests 380). Advisor found `confirm_issue_photo` executable by anon (no data exposed); fix drafted as migration 1500, NOT applied (needs owner approval). Add Issue screens NOT built yet. Handoff written: docs/HANDOFF.md.
 - NEXT (owner-approved direction): Cockpit-style look (PHC palette), Projects list + project summary like Site Audit, read-only room detail cards. Part-request editing of details is a later step.
 
 ## Completed (Step 6, 2026-11-08: phone readiness — AWAITING the real-phone trial)
