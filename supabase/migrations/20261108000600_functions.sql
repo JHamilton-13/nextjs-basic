@@ -45,6 +45,8 @@ begin
   return 'ready';
 end $$;
 
+-- Clients and general contractors have NO in-app access to audits (owner decision 2026-11-08): they receive a PDF by
+-- email instead. When report emailing exists, add a "pdf sent" condition here to open specific audits to them.
 create function app.can_see_audit(p_audit_id uuid, p_version integer) returns boolean
   language sql stable security definer set search_path = public, pg_temp
   as $$
@@ -52,10 +54,8 @@ create function app.can_see_audit(p_audit_id uuid, p_version integer) returns bo
       select 1 from public.audits a
       where a.audit_id = p_audit_id and a.version = p_version and (
         app.is_admin() or (
-          app.project_role(a.project_id) is not null and (
-            app.project_role(a.project_id) not in ('general_contractor', 'client')
-            or exists (select 1 from public.releases r where r.audit_id = a.audit_id and r.version = a.version)
-          )
+          app.project_role(a.project_id) is not null
+          and app.project_role(a.project_id) not in ('general_contractor', 'client')
         )
       )
     )

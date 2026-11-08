@@ -83,7 +83,7 @@ begin
   perform test.as_user(test.u(6));
   perform test.raises(format($q$select public.confirm_photo(%L)$q$, test.u(2100)), '42501', 'a general contractor cannot confirm photos');
   perform test.ok((select count(*) from storage.objects where name = pth) = 0 and (select count(*) from public.photos where id = test.u(2100)) = 0,
-    'a general contractor cannot see photos or files of an unreleased audit');
+    'a general contractor cannot see photos or files');
   perform test.as_user(test.u(4));
   perform test.ok((select count(*) from storage.objects where name = pth) = 1, 'the installer can read the file');
   perform test.as_user(test.u(8));

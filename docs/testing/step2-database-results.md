@@ -37,6 +37,28 @@ Not covered here: 1, 2, 6-9, 11, 15, 17 (need the PWA, Drive, PDFs, signatures).
 - Supabase-specific behaviour (Auth hook wiring, real storage.objects policies, PostgREST/column-grant behaviour) is only verified on stand-ins until applied to the real project.
 - No test for `service_role` paths. No load/performance test.
 
+## Applied to the real project (2026-11-08, after owner approval)
+Project `zuyzxkkmsyuybbznelql` ("Project Field Tracking", us-east-2, Postgres 17.x) was empty before (0 tables, 0 migrations).
+Applied in order with the Supabase `apply_migration` tool, each returning success: types_and_helpers, identity_and_invites,
+projects_members_rooms, templates_and_audits, sync_log_notifications, functions, rls_and_grants, storage, fix_function_search_paths
+(migration 0900, added after the advisor flagged 13 helper functions without a pinned search_path; retested locally first, 235 assertions + concurrency).
+Before applying, owner decision 5 changed one rule: clients and GCs have NO in-app access (they get a PDF by email). Tests were updated and re-run first.
+
+Checks run against the real project afterwards (read-only):
+- 16 tables in `public`, none without RLS; `anon` has 0 table grants and cannot execute any public function; `authenticated` can execute only
+  apply_op, audit_state, confirm_photo, grant_override, release_audit, revise_audit.
+- `hook_before_user_created`: executable by `supabase_auth_admin` only; returns the 403 error object for an uninvited email and for an empty event.
+- `on_auth_user_created` trigger exists on `auth.users`; private bucket `audit-photos` exists with its 2 policies.
+- Tolerance function on the real DB at expected 120" (+/-1/2", band 1"): 7615 FAIL, 7616 REVIEW, 7647 REVIEW, 7648 PASS, 7680 PASS, 7712 PASS,
+  7713 REVIEW, 7744 REVIEW, 7745 FAIL (matches the local tests and the domain package).
+- Template validator accepts a valid config and rejects an empty one.
+- Supabase security advisors after migration 0900: only (a) INFO `applied_ops` and `email_outbox` have RLS and no policies (intentional: no API access) and
+  (b) WARN x6 "signed-in users can execute SECURITY DEFINER function" for the six RPCs above (intentional: each checks identity and role inside).
+- Supabase performance advisors (empty database, so informational): FK columns without covering indexes (20), policies using `auth.uid()` without the
+  `(select auth.uid())` wrapper (9), `rooms` has two permissive SELECT policies, 6 indexes unused yet. Logged as technical debt.
+- Data written to the real project: none (no users, invites, projects, templates, or audits exist yet). The example `seed.sql` was NOT applied.
+- NOT yet verified on the real project: end-to-end sign-in with the hook (needs dashboard steps below), RLS as a real signed-in user, storage uploads.
+
 ## Verbatim output
 ```
 == stub

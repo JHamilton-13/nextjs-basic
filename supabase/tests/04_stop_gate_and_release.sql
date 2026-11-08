@@ -46,9 +46,9 @@ begin
 
   -- gc/client cannot see the unreleased audit
   perform test.as_user(test.u(6));
-  perform test.ok((select count(*) from public.audits where audit_id = a) = 0, 'general contractor cannot see an unreleased audit');
+  perform test.ok((select count(*) from public.audits where audit_id = a) = 0, 'general contractor cannot see an audit');
   perform test.as_user(test.u(7));
-  perform test.ok((select count(*) from public.audit_items where audit_id = a) = 0 and (select count(*) from public.project_readiness) = 0, 'client cannot see unreleased items or readiness');
+  perform test.ok((select count(*) from public.audit_items where audit_id = a) = 0 and (select count(*) from public.project_readiness) = 0, 'client cannot see items or readiness');
   perform test.as_user(test.u(8));
   perform test.ok((select count(*) from public.audits where audit_id = a) = 1, 'warehouse (project member) can see the audit');
 
@@ -88,9 +88,11 @@ begin
   perform test.raises(format($q$delete from public.releases where id = %L$q$, v_rel), 'insert-only', 'releases cannot be deleted');
 
   perform test.as_user(test.u(6));
-  perform test.ok((select count(*) from public.audits where audit_id = a) = 1 and (select count(*) from public.audit_items where audit_id = a) = 42, 'after release the general contractor can see the audit');
+  perform test.ok((select count(*) from public.audits where audit_id = a) = 0 and (select count(*) from public.audit_items where audit_id = a) = 0, 'even after release the general contractor has no in-app access (they get a PDF by email)');
   perform test.as_user(test.u(7));
-  perform test.ok((select state from public.project_readiness where audit_id = a) = 'released_for_installation', 'client sees released readiness');
+  perform test.ok((select count(*) from public.project_readiness) = 0 and (select count(*) from public.overrides) = 0 and (select count(*) from public.releases) = 0, 'client sees no readiness, overrides or releases in the app');
+  perform test.as_user(test.u(2));
+  perform test.ok((select state from public.project_readiness where audit_id = a) = 'released_for_installation', 'project manager sees released readiness');
   perform test.as_postgres();
 end $$;
 
@@ -124,8 +126,8 @@ begin
   perform test.as_postgres();
   perform test.ok((select count(*) from public.overrides where audit_id = a) = 2 and (select count(*) from public.releases where audit_id = a) = 2, 'both overrides and both releases are kept as history');
 
-  perform test.as_user(test.u(7));
-  perform test.ok((select version from public.project_readiness where audit_id = a) = 2, 'client sees the latest released version');
+  perform test.as_user(test.u(2));
+  perform test.ok((select version from public.project_readiness where audit_id = a) = 2, 'the dashboard shows the latest version');
   perform test.as_postgres();
 end $$;
 

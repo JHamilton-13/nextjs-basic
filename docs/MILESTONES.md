@@ -5,26 +5,34 @@ Last updated: 2026-11-08
 ## Completed
 - **Step 0 — environment audit** (approved 2026-11-08).
 - **Step 1 — monorepo + domain package** (approved 2026-11-08). 122 Vitest tests, strict typecheck clean. Owner decisions applied the same day: only managers release; no required-result gating on submit; 0 items can be submitted. See `docs/testing/step1-domain-results.md`.
-- **Step 2 — database migrations, files only (written and tested; AWAITING OWNER REVIEW of the SQL).** 8 migrations in `supabase/migrations/`, example seed in `supabase/seed.sql`, tests in `supabase/tests/`: 234 assertions + 2 real-concurrency checks passing on local Postgres 16. NOTHING has been applied to Supabase project `zuyzxkkmsyuybbznelql`. See `docs/DATABASE_SCHEMA.md` and `docs/testing/step2-database-results.md`.
+- **Step 2 — database (approved and APPLIED to Supabase project `zuyzxkkmsyuybbznelql` on 2026-11-08).** 9 migrations in `supabase/migrations/`, example seed in `supabase/seed.sql` (NOT applied), tests in `supabase/tests/`: 235 assertions + 2 real-concurrency checks on local Postgres 16; remote structure, advisors and function behaviour verified read-only. No data has been written to the real project. See `docs/DATABASE_SCHEMA.md` and `docs/testing/step2-database-results.md`.
 
 ## In progress
-- Owner review of the Step 2 SQL. Step 3 (PWA scaffold) does not start until Step 2 is reviewed.
+- Owner dashboard setup (below), then first-admin bootstrap. Step 3 (PWA scaffold) starts after owner approval.
+
+## Owner actions needed in the Supabase dashboard (I cannot do these)
+1. Authentication > Hooks: enable **Before User Created** -> `public.hook_before_user_created`. UNTIL THIS IS ON, anyone can create an auth account if a sign-in provider is enabled (they still see no data, because RLS requires an active invite, but do not leave it off).
+2. Authentication > Providers: enable Google (create the OAuth client in Google Cloud; secrets go in Supabase only) and Email OTP; turn OFF anonymous sign-ins.
+3. Tell me the exact Google email you will sign in with so I can create your invite and, after your first sign-in, set `is_admin`.
 
 ## Not started
 - Step 3: `apps/field` PWA scaffold + thin vertical slice; Playwright offline test. `apps/field` and `packages/integration-contract` are bare `package.json` stubs.
-- Applying migrations remotely, enabling the auth hook, Google/email OTP setup, first-admin bootstrap (steps listed in `supabase/README.md`).
+- Enabling the auth hook, Google/email OTP setup, first-admin bootstrap (steps in `supabase/README.md`); inserting the company's real audit template.
 
 ## Blockers
 - No Docker daemon in this container: tests use plain Postgres 16 with Supabase stand-ins (auth/storage schemas, roles). Supabase-specific wiring (Before User Created hook, real storage policies, PostgREST column grants) is verified only after the migrations are applied to the real project.
 - Google OAuth client not yet created (owner task, spec §13).
 
-## Decisions needed from owner (Step 2)
+## Owner decisions on Step 2 (answered 2026-11-08)
+1 invite/project/template rights: admins + production/project managers (confirmed). 2 never-entered critical items: NOT routed to review (declined). 3 first admin: the owner. 5 clients/GCs: no in-app access; PDF by email. 4 evidence rules: see item 4 below (explained to owner; example defaults kept). Remaining open: item 4 confirmation, which email to invite.
+
+## Original Step 2 questions
 1. **Who maintains the invite list and creates projects/templates?** Implemented: admins plus anyone who is a production manager or project manager on at least one project. Spec only says "suggest admin/PM".
 2. **Consequence of decision 4 (submit needs no results):** a submitted audit with nothing entered, or with a critical MEP item never entered, is derived as **Ready** and a manager can release it with no override. Only an entered critical FAIL blocks. If you want never-entered critical items to count (e.g. route to Manager Review Required), say so; it is a small change in `audit_state()` and the domain `auditState()`.
 3. **Admin bootstrap:** first admin is created by inserting the owner's email into `invites` and flipping `profiles.is_admin` in the SQL editor (never in the repo). Confirm that is acceptable.
 4. **Evidence rules enforced at write time:** `requires.note/drawingRef/photo` block a result being recorded (photo = a registered photo row for that item). In the example template, wall length and ceiling height require a drawing reference; MEP items require 1 photo. Company template to be supplied.
 5. **Authorized evidence exceptions and supervisor approval** exist in the domain package but are NOT implemented in the database; items that require supervisor approval are rejected until the workflow is built. Confirm they can wait for a later step.
-6. **Clients/GC visibility:** they see an audit version only after it is released. Confirm.
+6. **Clients/GC visibility (decided 2026-11-08):** no in-app access; they receive a PDF by email (report emailing is a later step; `app.can_see_audit` is the single place to open specific audits to them later).
 7. Which email addresses to invite first, and the company's real template content/tolerances (example template is clearly labeled).
 
 ## Technical debt / notes
@@ -32,4 +40,5 @@ Last updated: 2026-11-08
 - Concurrency tested for `apply_op` only; no load testing; no tests of `service_role` paths.
 - `npm audit` reports advisories in the Next.js 14.2.5 starter tree; not addressed.
 - Notifications are rows + queued email records only; no sender exists yet.
+- Supabase performance advisor items (empty DB now): add indexes on FK columns, wrap `auth.uid()` as `(select auth.uid())` in policies, merge the two `rooms` SELECT policies.
 - PR #1 carries spec, domain package and database work together (owner chose not to split).

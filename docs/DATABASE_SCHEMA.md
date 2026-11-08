@@ -1,7 +1,7 @@
 # Database schema (Supabase Postgres) — Foundation + Pre-Install Audit
 
 Source of truth: `supabase/migrations/*.sql`. Tests: `supabase/tests/` (see `docs/testing/step2-database-results.md`).
-Status: written and tested on a local Postgres 16; NOT applied to any Supabase project.
+Status: applied to Supabase project `zuyzxkkmsyuybbznelql` on 2026-11-08 (migrations 0100-0900); tested on local Postgres 16 and verified read-only on the real project.
 
 | Table | Purpose | Written by |
 |---|---|---|
@@ -18,6 +18,8 @@ Status: written and tested on a local Postgres 16; NOT applied to any Supabase p
 | `applied_ops` | idempotency ledger (opId -> first outcome); no API access | `apply_op` |
 | `audit_log` | append-only change log (insert/update/delete triggers on all tables above) | triggers |
 | `notifications`, `email_outbox` | critical-fail alerts to PM/production/installation managers; emails only QUEUED | `apply_op` |
+
+Clients and general contractors have no in-app access to audits (they receive PDFs by email); see `app.can_see_audit`.
 
 Functions (RPC, `authenticated` only): `apply_op(jsonb)`, `grant_override`, `release_audit`, `revise_audit`, `confirm_photo`,
 `audit_state`. Sign-in gate: `hook_before_user_created(jsonb)` (auth service only). View: `project_readiness` (security invoker).

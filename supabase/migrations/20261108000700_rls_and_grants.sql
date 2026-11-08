@@ -97,7 +97,7 @@ create policy templates_insert on public.audit_templates for insert to authentic
 create policy templates_update on public.audit_templates for update to authenticated
   using (app.can_manage_invites()) with check (app.can_manage_invites());
 
--- audits and everything hanging off them: read-only through the API; clients/GCs only see released versions
+-- audits and everything hanging off them: read-only through the API; clients/GCs have no in-app access (see app.can_see_audit)
 grant select on public.audits, public.audit_items, public.measurements, public.overrides, public.releases to authenticated;
 create policy audits_select on public.audits for select to authenticated using (app.can_see_audit(audit_id, version));
 create policy audit_items_select on public.audit_items for select to authenticated using (app.can_see_audit(audit_id, version));
