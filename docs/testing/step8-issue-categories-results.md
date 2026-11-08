@@ -10,7 +10,7 @@ tsc --noEmit (domain, field)                clean
 Mutation check (code deliberately broken, tests must fail, then restored): void issues counted -> 2 tests failed; empty checklist counted as completed -> 1 failed; newline allowed in an email -> 2 failed.
 Decisions in the rules: issues whose room is not in the room list are left out of both counts and lists; an empty checklist definition is never Completed; `isValidEmail` does not trim.
 
-## Step 2: migration 1600 (file only, NOT applied to the remote project)
+## Step 2: migration 1600 (APPLIED to the remote project 2026-11-08 after owner approval; verified live, see docs/DATABASE_SCHEMA.md)
 `supabase/migrations/20261108001600_issue_trades_void_builder.sql`, tests `supabase/tests/10_issue_trades_void_builder.sql`.
 ```
 bash supabase/tests/run.sh                  PASSED: 456 assertions + concurrency checks   (was 380; +76)
