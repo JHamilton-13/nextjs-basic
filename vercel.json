@@ -45,9 +45,8 @@
   ],
   "functions": {
     "api/reports.mjs": {
-      "memory": 1024,
       "maxDuration": 60,
-      "includeFiles": "packages/reports/assets/**"
+      "includeFiles": "{packages/reports/assets/**,node_modules/pdfkit/js/**}"
     }
   }
 }

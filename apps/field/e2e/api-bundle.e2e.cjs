@@ -21,8 +21,9 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     await control({ resetIssues: true, resetChecks: true, role: "project_manager" });
     process.env.VITE_SUPABASE_URL = MOCK; process.env.VITE_SUPABASE_PUBLISHABLE_KEY = "test-key";
     process.env.REPORT_FROM = "Test Reports <reports@example.test>"; process.env.REPORT_TRANSPORT = "fake"; delete process.env.VERCEL_ENV;
-    process.chdir(path.resolve(cwd, "../.."));                               // like Vercel: the function runs from the project root, assets shipped with it
-    const { default: handler } = await import(path.resolve(cwd, "../../api/reports.mjs"));
+    const ROOT = process.env.API_ROOT || path.resolve(cwd, "../..");           // API_ROOT: a folder holding ONLY the files Vercel would ship (see docs/ops/vercel-function-check.md)
+    process.chdir(ROOT);                                                      // like Vercel: the function runs from the project root, assets shipped with it
+    const { default: handler } = await import(path.join(ROOT, "api/reports.mjs"));
     const call = async (body, token = "test-token", method = "POST") => {
       const out = {}; const res = { status(c) { out.status = c; return res; }, setHeader() { return res; }, json(b) { out.json = b; } };
       await handler({ method, headers: token ? { authorization: `Bearer ${token}` } : {}, body }, res); return out;
