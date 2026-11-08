@@ -62,6 +62,9 @@ Last updated: 2026-11-08
 6. **Clients/GC visibility (decided 2026-11-08):** no in-app access; they receive a PDF by email (report emailing is a later step; `app.can_see_audit` is the single place to open specific audits to them later).
 7. Which email addresses to invite first, and the company's real template content/tolerances (example template is clearly labeled).
 
+## Step 10: report documents (sample PDFs ready for review)
+`packages/reports` builds the Builder Site Audit and Room Status PDFs from fake data; 30 tests pass. Samples: `docs/testing/images/builder-audit-sample.pdf` and PNGs. Awaiting owner comparison with the Fulton layout before report building and sending (Step 5). See `docs/testing/step10-report-documents-results.md`.
+
 ## Technical debt / notes
 - Decimal-inch and mm inputs round to nearest 1/64"; fraction denominators limited to 2..64 (powers of two).
 - Concurrency tested for `apply_op` only; no load testing; no tests of `service_role` paths.
