@@ -1,7 +1,7 @@
 # Database schema (Supabase Postgres) — Foundation + Pre-Install Audit
 
 Source of truth: `supabase/migrations/*.sql`. Tests: `supabase/tests/` (see `docs/testing/step2-database-results.md`).
-Migration 1000 (`confirm_photo` size check) is APPLIED (2026-11-08). Migration 1100 (annotations on photos, who/when on audit items, offline revise as an `apply_op` action, evidence across versions) is APPLIED (2026-11-08) and verified on the live project.
+Migration 1000 (`confirm_photo` size check) is APPLIED (2026-11-08). Migration 1100 (annotations on photos, who/when on audit items, offline revise as an `apply_op` action, evidence across versions) is APPLIED (2026-11-08) and verified on the live project. Migration 1200 (`rooms.details` jsonb, `details_source`, `details_updated_at`, with `app.room_details_valid`: text values only, <= 60 fields, never `phcOnlyNotes` or `gateCode`) is APPLIED (2026-11-08, owner-approved) and verified live. Installers read room details; only managers write them. Part-request edits are a later step.
 Status: applied to Supabase project `zuyzxkkmsyuybbznelql` on 2026-11-08 (migrations 0100-0900); tested on local Postgres 16 and verified read-only on the real project.
 
 | Table | Purpose | Written by |
