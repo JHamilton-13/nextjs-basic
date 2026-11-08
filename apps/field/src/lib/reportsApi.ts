@@ -11,7 +11,7 @@ export function canManageReports(roles: MyRoles | undefined, projectId: string):
 
 export type ReportsRequest =
   | { action: "build"; projectId: string; type: "builder_site_audit" | "room_status" }
-  | { action: "send" | "sendTest"; reportId: string };
+  | { action: "send" | "sendTest" | "print"; reportId: string };
 export type ReportsResult =
   | { ok: true; data: Record<string, unknown> }
   | { ok: false; status: number; code: string; message: string; bytes?: number };
@@ -54,6 +54,14 @@ export function describeReportProblem(p: { code: string; message: string; bytes?
 }
 
 export type ReportStatus = "built" | "queued" | "sent" | "failed";
+
+/** What a saved report is called on screen: only a report that was emailed or printed is kept; anything else is a throw-away preview. */
+export function savedLabel(r: { status: ReportStatus; sent_at: string | null; printed_at: string | null }): "sent" | "printed" | "sent and printed" | "preview" {
+  if (r.sent_at && r.printed_at) return "sent and printed";
+  if (r.sent_at) return "sent";
+  if (r.printed_at) return "printed";
+  return "preview";
+}
 export const reportStatusLabel = (s: ReportStatus): string => ({ built: "Ready to send", queued: "Sending…", sent: "Sent", failed: "Failed" })[s];
 
 /** A report left in "queued" for over 10 minutes may be retried (the database allows it); the screen tells the manager to check the Sent folder first. */

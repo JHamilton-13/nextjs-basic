@@ -45,6 +45,13 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     const list = await rest("/rest/v1/reports");
     check(list.length === 2 && list.every((r) => r.status === "built" && r.storage_path === `${P}/${r.id}.pdf`), "both reports are recorded as built under <project>/<report>.pdf");
 
+    const files = async () => (await (await fetch(`${MOCK}/__sent`)).json()).files.length;
+    const b2 = await call({ action: "build", projectId: P, type: "builder_site_audit" });
+    const list2 = await rest("/rest/v1/reports");
+    check(b2.status === 200 && list2.length === 2 && !list2.some((r) => r.id === b.json.reportId) && await files() === 2, "a rebuild replaces the previous preview of that type: its row AND its file are removed (real storage adapter)");
+    const pr = await call({ action: "print", reportId: s.json.reportId });
+    check(pr.status === 200 && pr.json.status === "printed" && (await rest("/rest/v1/reports")).find((r) => r.id === s.json.reportId).printed_at, "print is recorded");
+    Object.assign(b, { json: b2.json });
     const noContact = await call({ action: "send", reportId: b.json.reportId });
     check(noContact.status === 422 && noContact.json.error === "no_recipient", `send without a builder email on the job is refused (${noContact.status} ${JSON.stringify(noContact.json)})`);
     await fetch(`${MOCK}/rest/v1/projects?id=eq.${P}`, { method: "PATCH", headers: { authorization: "Bearer test-token", "content-type": "application/json" }, body: JSON.stringify({ prepared_for_name: "Sample Builder", prepared_for_email: "builder@example.test", address: "1 Test St" }) });
@@ -57,6 +64,7 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     const again = await call({ action: "send", reportId: b.json.reportId });
     check(again.status === 409 && again.json.error === "report_already_sent", "a second send is refused (once only)");
     const final = (await rest("/rest/v1/reports")).find((r) => r.id === b.json.reportId);
+    check((await rest("/rest/v1/reports")).length === 2 && await files() === 2, "after the send exactly two reports remain: the sent audit and the printed status report");
     check(final.status === "sent" && final.recipient_email === "builder@example.test" && /^fake-/.test(final.message_id), "the report is recorded as sent with the message id");
 
     const prod = await (async () => { process.env.VERCEL_ENV = "production"; const r = await call({ action: "sendTest", reportId: s.json.reportId }); delete process.env.VERCEL_ENV; return r; })();

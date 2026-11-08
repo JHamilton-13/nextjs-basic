@@ -91,7 +91,11 @@ begin
   perform test.as_user(test.u(5));
   perform test.ok((select count(*) from storage.objects where name = pth) = 0, 'a member of another project cannot read the file');
   perform test.as_user(test.u(4));
-  perform test.raises(format($q$delete from storage.objects where name = %L$q$, pth), '42501', 'uploaded evidence cannot be deleted by users');
+  -- (Supabase grants delete on storage.objects to signed-in users and relies on row-level security: with no delete policy the statement removes nothing)
+  delete from storage.objects where name = pth;
+  perform test.as_postgres();
+  perform test.ok(exists (select 1 from storage.objects where name = pth), 'uploaded evidence cannot be deleted by users');
+  perform test.as_user(test.u(4));
   perform test.raises(format($q$update storage.objects set name = 'moved' where name = %L$q$, pth), '42501', 'uploaded evidence cannot be replaced by users');
 
   -- size check: a stored file whose size differs from the registered size is refused

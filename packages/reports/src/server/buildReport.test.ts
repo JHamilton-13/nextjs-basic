@@ -55,6 +55,19 @@ describe("buildReport", () => {
     expect(st.uploads).toEqual([]);
     expect(db.reports.size).toBe(0);
   });
+  it("a new build replaces the last preview of that type (row and file) but not a saved report", async () => {
+    const db = seed(); const st = new FakeStorage();
+    const logo = await sharp({ create: { width: 20, height: 20, channels: 4, background: "#000" } }).png().toBuffer();
+    let n = 0; const d = { ...deps(db, st), logo, newId: () => `00000000-0000-4000-8000-00000000010${++n}` };
+    const first = await buildReport(d, "p1", "room_status");
+    const second = await buildReport(d, "p1", "room_status");
+    expect([...db.reports.keys()]).toEqual([second.reportId]);
+    expect(st.files.has(`reports/p1/${first.reportId}.pdf`)).toBe(false);
+    db.reports.get(second.reportId)!.printed_at = "2026-09-12T10:00:00Z";
+    const third = await buildReport(d, "p1", "room_status");
+    expect([...db.reports.keys()].sort()).toEqual([second.reportId, third.reportId].sort());
+    expect(st.files.has(`reports/p1/${second.reportId}.pdf`)).toBe(true);
+  });
   it("the limit is 18 MB", () => { expect(MAX_PDF_BYTES).toBe(18 * 1024 * 1024); });
   it("builds a status PDF without touching photos", async () => {
     const db = seed(); const st = new FakeStorage();

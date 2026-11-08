@@ -2,7 +2,7 @@ import { isValidEmail } from "@phc/domain";
 import { buildReport, type BuildDeps } from "./buildReport";
 import { ReportError, ReportTooLargeError } from "./errors";
 import type { ReportDb, ReportStorage } from "./ports";
-import { sendReport, sendTestReport } from "./sendReport";
+import { printReport, sendReport, sendTestReport } from "./sendReport";
 import type { EmailTransport } from "./transport";
 
 export interface ApiRequest { method: string; authorization: string | undefined; body: unknown }
@@ -25,7 +25,7 @@ const STATUS: Record<string, number> = {
 };
 const bad = (status: number, code: string, message: string): ApiResponse => ({ status, json: { error: code, message } });
 
-/** One endpoint, three actions: build, send, sendTest. The route file only wires real Supabase and Gmail into this. */
+/** One endpoint, four actions: build, print, send, sendTest. The route file only wires real Supabase and Gmail into this. */
 export async function handleReportsRequest(req: ApiRequest, ctx: HandlerContext): Promise<ApiResponse> {
   if (req.method !== "POST") return bad(405, "method_not_allowed", "Use POST.");
   const m = /^Bearer (.+)$/.exec(req.authorization ?? "");
@@ -33,7 +33,7 @@ export async function handleReportsRequest(req: ApiRequest, ctx: HandlerContext)
   const token = m[1]!;
   const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
   const action = body.action;
-  if (action !== "build" && action !== "send" && action !== "sendTest") return bad(400, "bad_request", "Unknown action.");
+  if (action !== "build" && action !== "send" && action !== "sendTest" && action !== "print") return bad(400, "bad_request", "Unknown action.");
 
   try {
     const user = await ctx.getUser(token);
@@ -50,6 +50,10 @@ export async function handleReportsRequest(req: ApiRequest, ctx: HandlerContext)
 
     const reportId = String(body.reportId ?? "");
     if (!UUID.test(reportId)) return bad(400, "bad_request", "A report is required.");
+    if (action === "print") {                                   // printing needs no email settings
+      await printReport({ db, storage }, reportId);
+      return { status: 200, json: { status: "printed" } };
+    }
     const from = ctx.env.REPORT_FROM;
     if (!from) return bad(500, "not_configured", "Sending is not set up yet: the REPORT_FROM setting is missing in Vercel.");
     const deps = { db, storage, transport: ctx.transport(), from, timezone };

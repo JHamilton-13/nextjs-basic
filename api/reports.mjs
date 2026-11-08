@@ -383,6 +383,25 @@ async function renderReport(doc) {
   return renderToBuffer(doc);
 }
 
+// src/server/cleanup.ts
+var REPORT_FILE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.pdf$/i;
+var SWEEP_AFTER_MS = 10 * 6e4;
+async function cleanupReports(deps, projectId, type, keepId) {
+  const { db, storage } = deps;
+  const nowMs = (deps.now ?? (() => /* @__PURE__ */ new Date()))().getTime();
+  const paths = await db.pruneReports(projectId, type, keepId);
+  let failedFiles = paths.length > 0 ? await storage.remove("reports", paths) : 0;
+  let removedFiles = paths.length - failedFiles;
+  const known = new Set(await db.listReportPaths(projectId));
+  const orphans = (await storage.list("reports", projectId)).filter((f) => REPORT_FILE.test(f.path.slice(projectId.length + 1)) && !known.has(f.path)).filter((f) => f.createdAt === null || nowMs - Date.parse(f.createdAt) > SWEEP_AFTER_MS).map((f) => f.path);
+  if (orphans.length > 0) {
+    const failed = await storage.remove("reports", orphans);
+    failedFiles += failed;
+    removedFiles += orphans.length - failed;
+  }
+  return { removedReports: paths.length, removedFiles, failedFiles };
+}
+
 // src/server/errors.ts
 var ReportError = class extends Error {
   constructor(code, message) {
@@ -522,7 +541,13 @@ async function buildReport(deps, projectId, type) {
   const path = `${projectId}/${reportId}.pdf`;
   await storage.upload("reports", path, pdf);
   await db.createReport({ id: reportId, projectId, type, path, bytes: pdf.length });
-  return { reportId, bytes: pdf.length, identified, incomplete, photosMissing };
+  let removedReports = 0;
+  try {
+    removedReports = (await cleanupReports({ db, storage, now }, projectId, type, reportId)).removedReports;
+  } catch (e) {
+    console.error("report cleanup failed", e instanceof Error ? e.message : e);
+  }
+  return { reportId, bytes: pdf.length, identified, incomplete, photosMissing, removedReports };
 }
 
 // src/server/sendReport.ts
@@ -568,7 +593,22 @@ async function sendReport(deps, reportId, to) {
   } catch {
     throw new ReportError("sent_not_recorded", "The email was sent but could not be recorded. Check the Sent folder before trying again.");
   }
+  try {
+    await cleanupReports({ db: deps.db, storage: deps.storage, ...deps.now ? { now: deps.now } : {} }, report.project_id, report.report_type, reportId);
+  } catch (e) {
+    console.error("report cleanup failed", e instanceof Error ? e.message : e);
+  }
   return "sent";
+}
+async function printReport(deps, reportId) {
+  const report = await deps.db.getReport(reportId);
+  if (!report) throw new ReportError("report_not_found", "That report was not found, or you do not have access to it.");
+  await deps.db.markReportPrinted(reportId);
+  try {
+    await cleanupReports(deps, report.project_id, report.report_type, reportId);
+  } catch (e) {
+    console.error("report cleanup failed", e instanceof Error ? e.message : e);
+  }
 }
 async function sendTestReport(deps, reportId, managerEmail) {
   if (!isValidEmail(managerEmail)) throw new ReportError("invalid_recipient", "Your account has no valid email address.");
@@ -609,7 +649,7 @@ async function handleReportsRequest(req, ctx) {
   const token = m[1];
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const action = body.action;
-  if (action !== "build" && action !== "send" && action !== "sendTest") return bad(400, "bad_request", "Unknown action.");
+  if (action !== "build" && action !== "send" && action !== "sendTest" && action !== "print") return bad(400, "bad_request", "Unknown action.");
   try {
     const user = await ctx.getUser(token);
     if (!user) return bad(401, "not_signed_in", "Sign in again.");
@@ -624,6 +664,10 @@ async function handleReportsRequest(req, ctx) {
     }
     const reportId = String(body.reportId ?? "");
     if (!UUID.test(reportId)) return bad(400, "bad_request", "A report is required.");
+    if (action === "print") {
+      await printReport({ db, storage }, reportId);
+      return { status: 200, json: { status: "printed" } };
+    }
     const from = ctx.env.REPORT_FROM;
     if (!from) return bad(500, "not_configured", "Sending is not set up yet: the REPORT_FROM setting is missing in Vercel.");
     const deps = { db, storage, transport: ctx.transport(), from, timezone };
@@ -698,6 +742,18 @@ function supabaseDb(sb) {
       const { error } = await sb.rpc("mark_report_sent", { p_report_id: id, p_message_id: messageId });
       if (error) fail(error);
     },
+    async markReportPrinted(id) {
+      const { error } = await sb.rpc("mark_report_printed", { p_report_id: id });
+      if (error) fail(error);
+    },
+    async pruneReports(projectId, type, keepId) {
+      const { data, error } = await sb.rpc("prune_reports", { p_project: projectId, p_type: type, p_keep: keepId });
+      if (error) fail(error);
+      return data ?? [];
+    },
+    async listReportPaths(projectId) {
+      return (await rows(sb.from("reports").select("storage_path").eq("project_id", projectId))).map((r) => r.storage_path);
+    },
     async markReportFailed(id, message) {
       const { error } = await sb.rpc("mark_report_failed", { p_report_id: id, p_error: message });
       if (error) fail(error);
@@ -714,6 +770,16 @@ function supabaseStorage(sb) {
     async upload(bucket, path, bytes) {
       const { error } = await sb.storage.from(bucket).upload(path, bytes, { contentType: "application/pdf", upsert: false });
       if (error) throw new ReportError("upload_failed", `Could not store the PDF: ${error.message}`);
+    },
+    async remove(bucket, paths) {
+      const { data, error } = await sb.storage.from(bucket).remove(paths);
+      if (error) return paths.length;
+      return Math.max(0, paths.length - (data?.length ?? 0));
+    },
+    async list(bucket, folder) {
+      const { data, error } = await sb.storage.from(bucket).list(folder, { limit: 1e3 });
+      if (error || !data) return [];
+      return data.filter((f) => f.id !== null).map((f) => ({ path: `${folder}/${f.name}`, createdAt: f.created_at ?? null }));
     },
     async signedUrl(bucket, path, seconds) {
       const { data, error } = await sb.storage.from(bucket).createSignedUrl(path, seconds);

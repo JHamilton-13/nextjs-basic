@@ -91,6 +91,24 @@ describe("sendReport", () => {
   });
 });
 
+describe("after a send", () => {
+  it("the previously saved report of that type is removed with its file; a failed clean-up never fails the send", async () => {
+    const { db, storage, transport, deps } = await setup();
+    await db.createReport({ id: "older", projectId: "p1", type: "builder_site_audit", path: "p1/older.pdf", bytes: 10 });
+    storage.files.set("reports/p1/older.pdf", Buffer.from("%PDF old"));
+    db.reports.get("older")!.status = "sent"; db.reports.get("older")!.sent_at = "2026-09-01T10:00:00Z";
+    await sendReport(deps, "r1", to);
+    expect([...db.reports.keys()]).toEqual(["r1"]);
+    expect(storage.files.has("reports/p1/older.pdf")).toBe(false);
+    expect(transport.sent).toHaveLength(1);
+  });
+  it("a clean-up failure is swallowed", async () => {
+    const { db, deps } = await setup();
+    db.pruneReports = async () => { throw new Error("db down"); };
+    expect(await sendReport(deps, "r1", to)).toBe("sent");
+  });
+});
+
 describe("sendTestReport", () => {
   it("sends only to the manager, labelled as a test, and leaves the status built", async () => {
     const { db, transport, deps } = await setup();

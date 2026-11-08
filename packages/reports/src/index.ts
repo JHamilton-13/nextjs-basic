@@ -13,3 +13,4 @@ export * from "./server/buildReport";
 export * from "./server/sendReport";
 export * from "./server/supabaseAdapters";
 export * from "./server/handler";
+export * from "./server/cleanup";

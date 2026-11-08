@@ -20,23 +20,23 @@ private window signed in as an installer of the same project for part F.
 
 ## B. Reports screen, before any email settings exist
 6. [ ] Project screen shows **Reports and builder contact** (managers only). The installer phone does not show it.
-7. [ ] Room status: Kitchen **Completed**, Bath 1 **Not completed** with the "Finished toes: After floor install, after 11/5" note and the open-issue counts you expect (Kitchen 2 open, Bath 1 1 or 2 open depending on step 2/3).
-8. [ ] Builder contact: type a bad email, see the error and Save disabled. Enter name `TEST Builder`, **your own email**, a fake address, Save. Reload the page: the values are still there.
-9. [ ] **Build site audit PDF**. Message says 2 or 3 identified, 1 or 2 incomplete (voided and Punch Item excluded). A report row appears as **Ready to send**.
+7. [ ] Room status: rooms fold (tap a name to open); Kitchen **Completed**, Bath 1 **Not completed** with the "Finished toes: After floor install, after 11/5" note and the open-issue counts you expect (Kitchen 2 open, Bath 1 1 or 2 open depending on step 2/3).
+8. [ ] Builder contact: if the job came from Cockpit the fields are pre-filled and say so; edit one, Save: the note changes to "Entered by hand" and the audit rebuilds. Type a bad email, see the error and Save disabled. Enter name `TEST Builder`, **your own email**, a fake address, Save. Reload the page: the values are still there.
+9. [ ] Opening Reports **builds the site audit by itself from the latest data**. The message says 2 or 3 identified, 1 or 2 incomplete (voided issues, Punch Items and Touch-ups are excluded: the builder PDF is Pre-Install Corrections only). One row appears, labelled **Preview, not saved**. Raise one more Pre-Install Correction on another phone, come back to Reports and press **Rebuild site audit**: the new issue is in the PDF and there is still only ONE audit preview (the old one is gone).
 10. [ ] **Preview PDF** opens. Check against `docs/testing/images/builder-audit-sample.pdf`:
     - [ ] cover: logo, job name, gold rule, date, "Prepared For TEST Builder", address, counts
     - [ ] rooms with a gold divider, trade badge, "Raised by: <initials> <m/d>", description
     - [ ] photos two across, numbered, each with a time and date stamp; the marked-up photo shows your pen and text
     - [ ] the voided issue and the Punch Item are NOT there; no room details or gate codes anywhere
     - [ ] page numbers "Page X of Y"
-11. [ ] **Create status PDF**, preview it: Kitchen Completed, Bath 1 Not completed with the note.
+11. [ ] **Create status PDF**, preview it, press **Print** (it opens the PDF and marks it Printed). Build and print another: only ONE status report stays, labelled Printed. Preview it: Kitchen Completed, Bath 1 Not completed with the note.
 12. [ ] Press **Send test to me**. Expected: the plain message that sending is not set up yet (it names the email settings). Nothing is emailed and the report stays Ready to send.
 
 ## C. After the owner adds the Vercel settings (see `docs/ops/gmail-send-setup.md`) and redeploys
 13. [ ] **Send test to me**: a mail arrives in YOUR mailbox, subject starts `TEST`, the PDF is attached and opens. The report is still Ready to send.
 14. [ ] **Send to builder**: the confirm box shows `TEST Builder (your email)` and "only be sent once". Press Cancel: nothing sent.
 15. [ ] Press Send to builder, then **Yes, send** (try a quick double tap). Exactly ONE mail arrives. The row shows **Sent** and has no Send button.
-16. [ ] Reload the page: still Sent. Open the PDF from the email: it matches the preview.
+16. [ ] Rebuild, send again to yourself (Retry/Send to builder): afterwards only ONE site audit remains (the newest Sent); the older Sent one is gone. Reload the page: still Sent. Open the PDF from the email: it matches the preview.
 17. [ ] Build a second audit, turn **airplane mode on**, reload the Reports screen: it says reports need a connection. Turn it off: the screen returns.
 
 ## D. Who can and cannot (installer phone)
@@ -44,6 +44,7 @@ private window signed in as an installer of the same project for part F.
 19. [ ] Installer can still see the issues and checklist as before (nothing broken).
 
 ## E. What I check in the database afterwards (no action for you)
+- At most one saved (sent or printed) report per kind; no old previews; no stray PDFs in the `reports` bucket.
 - `reports` rows: statuses, recipient, who, when, `message_id`; only the one real send is `sent`.
 - `audit_log` rows for build, queue and sent, each with the project id.
 - Storage: PDFs under `<project id>/<report id>.pdf` in the private `reports` bucket; none readable without a manager session.

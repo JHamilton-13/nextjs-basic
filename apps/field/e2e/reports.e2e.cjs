@@ -42,6 +42,7 @@ const server = async () => (await fetch(`${MOCK}/__sent`)).json();
       console.log(`== ${deviceName}`);
       const tag = (s) => `${deviceName}: ${s}`;
       await control({ resetIssues: true, resetChecks: true });
+      await control({ contact: { prepared_for_name: "Cockpit Builder Co.", prepared_for_email: "cockpit-builder@example.test", address: "55 Cockpit Street, Sampleville", contact_source: "cockpit" } });   // as if copied from Cockpit
       const context = await browser.newContext({ ...devices[deviceName], serviceWorkers: "block" });
       const session = { access_token: "test-token", token_type: "bearer", expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: "r", user: { id: USER, aud: "authenticated", email: "installer@phc.test", app_metadata: {}, user_metadata: { full_name: "Pat Installer" }, created_at: "2026-11-08T00:00:00Z" } };
       await context.addInitScript((s) => { if (!localStorage.getItem("phc-auth")) localStorage.setItem("phc-auth", JSON.stringify(s)); }, session);
@@ -73,11 +74,25 @@ const server = async () => (await fetch(`${MOCK}/__sent`)).json();
       await page.getByTestId("builder-contact").waitFor();
       await page.getByTestId("room-status-row").first().waitFor();
 
-      // room status
-      const rows = await page.getByTestId("room-status-row").allInnerTexts();
-      check(rows.length === 2 && rows.every((r) => r.includes("Not completed")), tag("both rooms show Not completed when nothing is ticked"));
-      check(rows[0].includes("Kitchen") && rows[0].includes("1 open issue") && rows[0].includes("Checklist not started"), tag("the Kitchen shows its 1 open issue and 'Checklist not started'"));
-      check(!/Bath 1/.test(rows[0]) && rows[1].includes("Bath 1") && rows[1].includes("0 open issues"), tag("rooms are listed in order with their own counts"));
+      // the site audit is built from the latest data when the screen opens
+      await page.getByTestId("report-row").first().waitFor({ timeout: 30000 });
+      check(/Site audit built from the latest data/.test(await page.getByTestId("reports-message").innerText()), tag("opening Reports builds the site audit from the latest data"));
+      const first = await server();
+      check(first.reports.length === 1 && first.reports[0].report_type === "builder_site_audit" && first.reports[0].status === "built" && first.sent.length === 0, tag("one preview was built and nothing was emailed"));
+      check((await page.getByTestId("report-row").first().getAttribute("data-saved")) === "no" && (await page.getByTestId("report-kind").first().innerText()).includes("Preview"), tag("it is labelled 'Preview, not saved'"));
+
+      // room status: each room folds
+      const rows = page.getByTestId("room-status-row");
+      check((await rows.count()) === 2 && (await rows.nth(0).innerText()).includes("Kitchen") && !(await rows.nth(0).innerText()).includes("Checklist not started"), tag("room status: rooms start folded (name and counts only)"));
+      await rows.nth(0).getByTestId("room-status-toggle").tap(); await rows.nth(1).getByTestId("room-status-toggle").tap();
+      const rowText = await rows.allInnerTexts();
+      check(rowText.every((r) => r.includes("Not completed")), tag("both rooms show Not completed when nothing is ticked"));
+      check(rowText[0].includes("Kitchen") && rowText[0].includes("1 open issue") && rowText[0].includes("Checklist not started"), tag("the Kitchen shows its 1 open issue and 'Checklist not started' when opened"));
+      check(!/Bath 1/.test(rowText[0]) && rowText[1].includes("Bath 1") && rowText[1].includes("0 open issues"), tag("rooms are listed in order with their own counts"));
+
+      // contact comes from Cockpit, can be edited
+      check((await page.getByTestId("contact-name").inputValue()) === "Cockpit Builder Co." && (await page.getByTestId("contact-email").inputValue()) === "cockpit-builder@example.test" && (await page.getByTestId("contact-address").inputValue()) === "55 Cockpit Street, Sampleville", tag("address and builder contact arrive pre-filled from Cockpit"));
+      check((await page.getByTestId("contact-source").innerText()).includes("Cockpit"), tag("the screen says the details came from Cockpit"));
 
       // builder contact: validation, save, persistence
       const save = page.getByTestId("contact-save");
@@ -88,26 +103,18 @@ const server = async () => (await fetch(`${MOCK}/__sent`)).json();
       await page.getByTestId("contact-email").fill("builder@example.test");
       await page.getByTestId("contact-address").fill("123 Example Street, Sampleville");
       await save.tap();
-      await waitFor(async () => (await page.getByTestId("reports-message").innerText()).includes("Saved"), "saved message");
+      await waitFor(async () => (await page.getByTestId("reports-message").innerText()).includes("rebuilt"), "saved and rebuilt");
       const s1 = await server();
-      check(s1.contact.prepared_for_email === "builder@example.test" && s1.contact.prepared_for_name === "Sample Builder" && s1.contact.address === "123 Example Street, Sampleville", tag("the contact reached the server"));
+      check(s1.contact.prepared_for_email === "builder@example.test" && s1.contact.prepared_for_name === "Sample Builder" && s1.contact.address === "123 Example Street, Sampleville", tag("the edited contact reached the server"));
+      check(s1.contact.contact_source === "manual" && (await page.getByTestId("contact-source").innerText()).includes("by hand"), tag("an edit changes the source from Cockpit to 'entered by hand'"));
       check(await save.isDisabled(), tag("Save is disabled again once saved"));
-
-      // build the site audit
-      check((await page.getByTestId("report-row").count()) === 0, tag("no reports before building"));
-      await page.getByTestId("build-audit").tap();
-      await page.getByTestId("report-row").waitFor({ timeout: 30000 });
-      const built = await page.getByTestId("reports-message").innerText();
-      check(/Site audit built/.test(built), tag("building reports success in plain words"));
+      check(s1.reports.length === 1 && s1.reports[0].id !== first.reports[0].id && s1.files.length === 1, tag("saving rebuilt the audit with the new details and the old preview and its file are gone"));
       const row = page.getByTestId("report-row").first();
-      check((await row.getAttribute("data-status")) === "built" && (await row.innerText()).includes("Ready to send"), tag("the new report is 'Ready to send'"));
-      const s2 = await server();
-      check(s2.reports.length === 1 && s2.reports[0].status === "built" && s2.reports[0].file_size > 1000 && s2.sent.length === 0, tag("one report stored, nothing emailed by building"));
       await page.screenshot({ path: path.join(IMG, `manager-reports-${deviceName.replace(/\W+/g, "-").toLowerCase()}.png`), fullPage: true });
 
       // preview opens the stored PDF through a signed link
       const [popup] = await Promise.all([context.waitForEvent("page"), row.getByTestId("report-preview").tap()]);
-      await popup.waitForLoadState().catch(() => {});
+      await popup.waitForURL(/\/storage\/v1\/object\/sign\/reports\//, { timeout: 10000 }).catch(() => {});      // the window is opened inside the tap, then sent to the signed link
       check(popup.url().includes("/storage/v1/object/sign/reports/") && popup.url().includes(".pdf"), tag("Preview opens the PDF from a signed link"));
       await popup.close();
 
@@ -130,31 +137,50 @@ const server = async () => (await fetch(`${MOCK}/__sent`)).json();
       const s4 = await server();
       const toBuilder = s4.sent.filter((m) => m.to === "builder@example.test");
       check(toBuilder.length === 1 && toBuilder[0].isPdf && /Site Audit \d{4}-\d{2}-\d{2}\.pdf$/.test(toBuilder[0].filename) && toBuilder[0].from.includes("reports@example.test"), tag("exactly one email went to the builder, with the PDF attached and a safe file name"));
-      check(s4.reports[0].status === "sent" && s4.reports[0].sent_at, tag("the report is recorded as sent"));
+      check(s4.reports.length === 1 && s4.reports[0].status === "sent" && s4.reports[0].sent_at, tag("the report is recorded as sent"));
       await waitFor(async () => (await page.getByTestId("report-row").first().getAttribute("data-status")) === "sent", "row shows sent");
-      check((await page.getByTestId("report-row").first().getByTestId("report-send").count()) === 0, tag("a sent report has no Send button (it can only be sent once)"));
+      check((await page.getByTestId("report-row").first().getByTestId("report-send").count()) === 0 && (await page.getByTestId("report-kind").first().innerText()).includes("Sent"), tag("a sent report is labelled Sent and has no Send button (it can only be sent once)"));
 
-      // a failure: the report shows Failed, the reason, and Retry; the retry sends once
+      // a new build next to the saved report; a failed send shows the reason and Retry; the retry sends once and REPLACES the old saved report
       await page.getByTestId("build-audit").tap();
-      await waitFor(async () => (await page.getByTestId("report-row").count()) === 2, "second report", 30000);
+      await waitFor(async () => (await page.getByTestId("report-row").count()) === 2, "preview next to the sent report", 30000);
+      check((await server()).files.length === 2 && (await page.getByTestId("report-row").filter({ hasText: "Preview, not saved" }).count()) === 1, tag("a rebuild adds one preview next to the saved report"));
+      const sentId = (await server()).reports.find((r) => r.status === "sent").id;
       await control({ sendFail: "Gmail refused the message (403): Quota exceeded" });
-      const second = page.getByTestId("report-row").first();
-      await second.getByTestId("report-send").tap();
+      await page.getByTestId("report-row").filter({ hasText: "Preview, not saved" }).getByTestId("report-send").tap();
       await page.getByTestId("send-confirm-yes").tap();
-      await waitFor(async () => (await page.getByTestId("report-row").first().getAttribute("data-status")) === "failed", "failed status");
+      await waitFor(async () => (await page.getByTestId("report-row").filter({ hasText: "Failed" }).count()) === 1, "failed status");
       check((await page.getByTestId("reports-message").innerText()).includes("not sent") && (await page.getByTestId("report-error").innerText()).includes("Quota exceeded"), tag("a failed send says so, with the reason"));
-      check((await (await server()).sent.filter((m) => m.to === "builder@example.test")).length === 1, tag("a failed send emailed nobody"));
+      check((await (await server()).sent.filter((m) => m.to === "builder@example.test")).length === 1 && (await server()).reports.some((r) => r.id === sentId), tag("a failed send emailed nobody and did not delete the saved report"));
       await control({ sendFail: null });
-      check((await page.getByTestId("report-row").first().getByTestId("report-send").innerText()).includes("Retry"), tag("a failed report offers Retry"));
-      await page.getByTestId("report-row").first().getByTestId("report-send").tap();
+      const failedRow = page.getByTestId("report-row").filter({ hasText: "Failed" });
+      check((await failedRow.getByTestId("report-send").innerText()).includes("Retry"), tag("a failed report offers Retry"));
+      await failedRow.getByTestId("report-send").tap();
       await page.getByTestId("send-confirm-yes").tap();
-      await waitFor(async () => (await page.getByTestId("report-row").first().getAttribute("data-status")) === "sent", "retry sent");
-      check((await (await server()).sent.filter((m) => m.to === "builder@example.test")).length === 2, tag("the retry sent once"));
+      await waitFor(async () => (await page.getByTestId("report-row").count()) === 1 && (await page.getByTestId("report-row").first().getAttribute("data-status")) === "sent", "retry sent and the old one gone");
+      const s5 = await server();
+      check(s5.sent.filter((m) => m.to === "builder@example.test").length === 2 && s5.reports.length === 1 && s5.reports[0].id !== sentId && s5.files.length === 1, tag("the retry sent once; the previously sent report and its file were deleted (only the latest sent report is kept)"));
 
-      // a stuck 'queued' report tells the manager to check the Sent folder
+      // the status report: Print records it, and a newer print replaces the older one
       await page.getByTestId("build-status").tap();
-      await waitFor(async () => (await page.getByTestId("report-row").count()) === 3, "status report", 30000);
-      check((await page.getByTestId("report-row").first().innerText()).includes("Room status") && (await page.getByTestId("report-row").first().getByTestId("report-send").count()) === 0, tag("a status PDF can be previewed and tested but has no Send to builder button"));
+      await waitFor(async () => (await page.getByTestId("report-row").count()) === 2, "status preview", 30000);
+      const statusRow = () => page.getByTestId("report-row").filter({ hasText: "Room status" });
+      check((await statusRow().first().getByTestId("report-send").count()) === 0, tag("a status PDF can be previewed, printed and tested but has no Send to builder button"));
+      const [printWin] = await Promise.all([context.waitForEvent("page"), statusRow().first().getByTestId("report-print").tap()]);
+      await printWin.waitForURL(/\/storage\/v1\/object\/sign\/reports\//, { timeout: 10000 }).catch(() => {});
+      check(printWin.url().includes("/storage/v1/object/sign/reports/"), tag("Print opens the PDF"));
+      await printWin.close();
+      await waitFor(async () => (await statusRow().first().getByTestId("report-kind").innerText()).includes("Printed"), "printed label");
+      const s6 = await server();
+      check(s6.reports.find((r) => r.report_type === "room_status").printed_at && s6.reports.length === 2, tag("printing is recorded and the printed status report is kept"));
+      await page.getByTestId("build-status").tap();
+      await waitFor(async () => (await page.getByTestId("report-row").count()) === 3, "second status preview", 30000);
+      const newPreview = statusRow().filter({ hasText: "Preview, not saved" });
+      const [printWin2] = await Promise.all([context.waitForEvent("page"), newPreview.getByTestId("report-print").tap()]);
+      await printWin2.close();
+      await waitFor(async () => (await page.getByTestId("report-row").count()) === 2, "older print replaced");
+      const s7 = await server();
+      check(s7.reports.filter((r) => r.report_type === "room_status").length === 1 && s7.reports.filter((r) => r.report_type === "builder_site_audit").length === 1 && s7.files.length === 2, tag("a new print replaces the older print; the sent site audit is untouched; no stray files"));
 
       // 44 px touch targets on the buttons that matter
       const targets = ["build-audit", "build-status", "contact-save"];

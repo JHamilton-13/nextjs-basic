@@ -10,7 +10,7 @@ export interface RoomCheckRow { room_id: string; item_key: string; state: "done"
 export interface ReportRow {
   id: string; project_id: string; report_type: "builder_site_audit" | "room_status"; storage_path: string; file_size: number;
   status: "built" | "queued" | "sent" | "failed"; recipient_name: string | null; recipient_email: string | null;
-  built_at: string; queued_at: string | null; sent_at: string | null; message_id: string | null; error: string | null;
+  built_at: string; queued_at: string | null; sent_at: string | null; printed_at: string | null; message_id: string | null; error: string | null;
 }
 
 /** Everything the report code needs from the database. Implemented over Supabase (the signed-in manager's session) and by FakeDb in tests. */
@@ -26,6 +26,11 @@ export interface ReportDb {
   queueReportSend(id: string, recipientName: string | null, recipientEmail: string): Promise<ReportRow>;
   markReportSent(id: string, messageId: string): Promise<void>;
   markReportFailed(id: string, error: string): Promise<void>;
+  markReportPrinted(id: string): Promise<void>;
+  /** Deletes the reports that are no longer wanted (see migration 1800) and returns their file paths. */
+  pruneReports(projectId: string, type: ReportRow["report_type"], keepId: string): Promise<string[]>;
+  /** Storage paths of every report row of this job (used to find files nothing points to). */
+  listReportPaths(projectId: string): Promise<string[]>;
 }
 
 export interface ReportStorage {
@@ -33,4 +38,8 @@ export interface ReportStorage {
   download(bucket: string, path: string): Promise<Buffer | null>;
   upload(bucket: string, path: string, bytes: Buffer): Promise<void>;
   signedUrl(bucket: string, path: string, seconds: number): Promise<string>;
+  /** Returns how many files could NOT be removed. */
+  remove(bucket: string, paths: string[]): Promise<number>;
+  /** Files directly inside a folder, with when they were stored. */
+  list(bucket: string, folder: string): Promise<{ path: string; createdAt: string | null }[]>;
 }

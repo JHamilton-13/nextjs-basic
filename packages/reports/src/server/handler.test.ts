@@ -63,6 +63,22 @@ describe("reports api", () => {
     expect(again).toMatchObject({ status: 409, json: { error: "report_already_sent" } });
     expect(transport.sent).toHaveLength(1);
   });
+  it("records a print, then keeps only the newest saved report of that type", async () => {
+    const { c, db } = await ctx();
+    const old = "33333333-3333-4333-8333-333333333333";
+    await db.createReport({ id: old, projectId: P, type: "builder_site_audit", path: `${P}/${old}.pdf`, bytes: 10 });
+    db.reports.get(old)!.sent_at = "2026-09-01T10:00:00Z"; db.reports.get(old)!.status = "sent";
+    await db.createReport({ id: R, projectId: P, type: "builder_site_audit", path: `${P}/${R}.pdf`, bytes: 10 });
+    const r = await handleReportsRequest(post({ action: "print", reportId: R }), c);
+    expect(r).toMatchObject({ status: 200, json: { status: "printed" } });
+    expect(db.reports.get(R)!.printed_at).toBeTruthy();
+    expect(db.reports.has(old)).toBe(false);
+  });
+  it("print needs a valid report id and a manager", async () => {
+    const { c } = await ctx();
+    expect((await handleReportsRequest(post({ action: "print", reportId: "nope" }), c)).status).toBe(400);
+    expect((await handleReportsRequest(post({ action: "print", reportId: R }), c)).status).toBe(404);
+  });
   it("will not send without a valid builder email on the job", async () => {
     const { c, db, transport } = await ctx();
     db.project!.prepared_for_email = null;

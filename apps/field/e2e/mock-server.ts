@@ -47,7 +47,7 @@ const objectBytes = new Map<string, Buffer>();
 let storageDown = false;
 
 // ---- reports (mirrors projects.prepared_for_*, public.reports and the 'reports' bucket on the real server; the api handler is the REAL code) ----
-let contact = { prepared_for_name: null as string | null, prepared_for_email: null as string | null, address: "1 Test St" as string | null };
+let contact = { prepared_for_name: null as string | null, prepared_for_email: null as string | null, address: "1 Test St" as string | null, contact_source: null as string | null };
 const reports = new Map<string, ReportRow>();
 let transport = fakeTransport();
 let transportFail: string | null = null;
@@ -64,7 +64,7 @@ function seedIssues() {
   issuePhotos.set(SEED_PHOTO, { id: SEED_PHOTO, issue_id: SEED_ISSUE, project_id: P, storage_path: SEED_PHOTO_PATH, bytes: seedPhotoBytes.length, checksum_sha256: "b".repeat(64), captured_by: OTHER, captured_at: "2026-11-07T15:01:00Z", confirmed_at: "2026-11-07T15:02:00Z", annotated_from: null, annotations: null });
   objects.set(SEED_PHOTO_PATH, seedPhotoBytes.length); objectBytes.set(SEED_PHOTO_PATH, seedPhotoBytes);
   myRole = "installer";
-  contact = { prepared_for_name: null, prepared_for_email: null, address: "1 Test St" };
+  contact = { prepared_for_name: null, prepared_for_email: null, address: "1 Test St", contact_source: null };
   reports.clear(); sentMail.length = 0; transportFail = null;
   for (const k of [...objectBytes.keys()]) if (k.startsWith(`${P}/`) && k.endsWith(".pdf") && !k.includes("/issues/")) { objectBytes.delete(k); objects.delete(k); }
 }
@@ -75,7 +75,7 @@ seedIssues();
 let dropNext = 0; let down = false; let hang = false;
 const plog = (kind: string, extra: Record<string, unknown> = {}) => log.push({ opId: String(extra.id ?? kind), entity: kind, entityId: String(extra.id ?? ''), baseVersion: 0, outcome: kind, ...extra } as never);
 
-const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "GET,POST,OPTIONS,PATCH", "access-control-expose-headers": "*" };
+const cors = { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "GET,POST,OPTIONS,PATCH,DELETE", "access-control-expose-headers": "*" };
 function multipartFileBuf(buf: Buffer, contentType: string): Buffer {
   const m = /boundary=(.+)$/.exec(contentType); if (!m) return buf;
   const bin = buf.toString("binary");
@@ -116,7 +116,7 @@ function mockReportDb(): ReportDb {
     async listRoomChecks() { return [...checks.entries()].map(([k, v]) => { const [room_id, item_key] = k.split(":"); return { room_id: room_id!, item_key: item_key!, state: v.state as "done" | "not_done" | "na", note: v.note, checked_by: USER, checked_at: v.checked_at }; }); },
     async createReport(a) {
       deny();
-      const r: ReportRow = { id: a.id, project_id: a.projectId, report_type: a.type, storage_path: a.path, file_size: a.bytes, built_at: new Date().toISOString(), status: "built", recipient_name: null, recipient_email: null, queued_at: null, sent_at: null, message_id: null, error: null };
+      const r: ReportRow = { id: a.id, project_id: a.projectId, report_type: a.type, storage_path: a.path, file_size: a.bytes, built_at: new Date().toISOString(), status: "built", recipient_name: null, recipient_email: null, queued_at: null, sent_at: null, printed_at: null, message_id: null, error: null };
       reports.set(r.id, r); plog("report_built", { id: r.id, type: a.type, bytes: a.bytes }); return { ...r };
     },
     async getReport(id) { deny(); const r = reports.get(id); return r ? { ...r } : null; },
@@ -126,6 +126,21 @@ function mockReportDb(): ReportDb {
       if (r.status === "queued" && r.queued_at && Date.now() - Date.parse(r.queued_at) < 10 * 60_000) throw new ReportError("report_already_queued", "report_already_queued");
       Object.assign(r, { status: "queued", queued_at: new Date().toISOString(), recipient_name: name, recipient_email: email, error: null }); return { ...r };
     },
+    async markReportPrinted(id) { deny(); const r = reports.get(id); if (!r) throw new ReportError("forbidden", "forbidden"); r.printed_at = new Date().toISOString(); plog("report_printed", { id }); },
+    async listReportPaths(projectId) { return [...reports.values()].filter((r) => r.project_id === projectId).map((r) => r.storage_path); },
+    async pruneReports(projectId, type, keepId) {                       // same rule as prune_reports in migration 1800
+      deny();
+      const saved = (r: ReportRow) => r.sent_at !== null || r.printed_at !== null;
+      const stamp = (r: ReportRow) => Math.max(r.sent_at ? Date.parse(r.sent_at) : -Infinity, r.printed_at ? Date.parse(r.printed_at) : -Infinity);
+      const newest = [...reports.values()].filter((r) => r.project_id === projectId && r.report_type === type && saved(r)).sort((a, b) => stamp(b) - stamp(a))[0];
+      const now = Date.now(); const paths: string[] = [];
+      for (const r of [...reports.values()]) {
+        if (r.status === "queued" && r.queued_at && now - Date.parse(r.queued_at) < 10 * 60_000) continue;
+        if ((r.report_type === type && r.id !== keepId && r.id !== newest?.id) || (!saved(r) && now - Date.parse(r.built_at) > 3_600_000)) { reports.delete(r.id); paths.push(r.storage_path); }
+      }
+      plog("report_prune", { id: keepId, removed: paths.length });
+      return paths;
+    },
     async markReportSent(id, messageId) { const r = reports.get(id)!; Object.assign(r, { status: "sent", sent_at: new Date().toISOString(), message_id: messageId }); },
     async markReportFailed(id, error) { const r = reports.get(id)!; Object.assign(r, { status: "failed", error }); },
   };
@@ -134,6 +149,8 @@ function mockReportStorage(): ReportStorage {
   return {
     async download(bucket, p) { const b = objectBytes.get(p); return b ? NodeBuffer.from(b) : null; },
     async upload(bucket, p, bytes) { objectBytes.set(p, bytes); objects.set(p, bytes.length); },
+    async remove(bucket, paths) { let failed = 0; for (const p of paths) { if (!objectBytes.delete(p)) failed++; objects.delete(p); } return failed; },
+    async list(bucket, folder) { return [...objectBytes.keys()].filter((k) => k.startsWith(`${folder}/`) && !k.slice(folder.length + 1).includes("/") && !k.includes("/issues/")).map((k) => ({ path: k, createdAt: "2020-01-01T00:00:00Z" })); },
     async signedUrl(bucket, p) { return `${"http://127.0.0.1:" + PORT}/storage/v1/object/sign/${bucket}/${p}?token=mock`; },
   };
 }
@@ -145,9 +162,9 @@ http.createServer((req, res) => {
   req.on("end", async () => {
     const raw = Buffer.concat(chunks); const body = raw.toString("utf8");
     if (url.pathname === "/__state") return send(res, 200, { log, versions: state.versions });
-    if (url.pathname === "/__control") { const c = JSON.parse(body || "{}"); if (c.dropNextResponses !== undefined) dropNext = c.dropNextResponses; if (c.down !== undefined) down = c.down; if (c.storageDown !== undefined) storageDown = c.storageDown; if (c.hang !== undefined) hang = c.hang; if (c.role !== undefined) myRole = String(c.role); if (c.resetIssues) seedIssues(); if (c.sendFail !== undefined) transportFail = c.sendFail; if (c.stuckQueuedMinutes !== undefined) { for (const r of reports.values()) if (r.status === "queued") r.queued_at = new Date(Date.now() - c.stuckQueuedMinutes * 60_000).toISOString(); } if (c.resetChecks) { checks.clear(); state = { ...state, versions: Object.fromEntries(Object.entries(state.versions).filter(([k]) => !k.startsWith("room_check:"))) }; } return send(res, 200, { dropNext, down, storageDown, hang }); }
+    if (url.pathname === "/__control") { const c = JSON.parse(body || "{}"); if (c.dropNextResponses !== undefined) dropNext = c.dropNextResponses; if (c.down !== undefined) down = c.down; if (c.storageDown !== undefined) storageDown = c.storageDown; if (c.hang !== undefined) hang = c.hang; if (c.role !== undefined) myRole = String(c.role); if (c.resetIssues) seedIssues(); if (c.contact) contact = { ...contact, ...c.contact }; if (c.sendFail !== undefined) transportFail = c.sendFail; if (c.stuckQueuedMinutes !== undefined) { for (const r of reports.values()) if (r.status === "queued") r.queued_at = new Date(Date.now() - c.stuckQueuedMinutes * 60_000).toISOString(); } if (c.resetChecks) { checks.clear(); state = { ...state, versions: Object.fromEntries(Object.entries(state.versions).filter(([k]) => !k.startsWith("room_check:"))) }; } return send(res, 200, { dropNext, down, storageDown, hang }); }
     if (url.pathname === "/__photos") return send(res, 200, { photos: [...photos.values()], objects: Object.fromEntries([...objects].filter(([k]) => !k.includes("/issues/"))) }); // audit photos only (issue photos have their own seed)
-    if (url.pathname === "/__sent") return send(res, 200, { sent: sentMail, reports: [...reports.values()], contact });
+    if (url.pathname === "/__sent") return send(res, 200, { sent: sentMail, reports: [...reports.values()], contact, files: [...objectBytes.keys()].filter((k) => /^[0-9a-f-]{36}\/[0-9a-f-]{36}\.pdf$/i.test(k)) });
     if (url.pathname === "/__rows") return send(res, 200, Object.fromEntries(rows));
     if (down) { res.destroy(); return; }
     if (hang) { return; } // accept the connection and never answer: the "Wi-Fi without internet" case
@@ -161,12 +178,12 @@ http.createServer((req, res) => {
       const b = JSON.parse(body) as Record<string, string | null>;
       if (b.prepared_for_email && !isValidEmail(b.prepared_for_email)) return send(res, 400, { code: "23514", message: 'new row for relation "projects" violates check constraint "projects_prepared_for_email_check"' });
       if (!MANAGERS.has(myRole)) return send(res, 200, []);                                        // row-level security: the update matches no row
-      contact = { prepared_for_name: b.prepared_for_name ?? null, prepared_for_email: b.prepared_for_email ?? null, address: b.address ?? null };
+      contact = { prepared_for_name: b.prepared_for_name ?? null, prepared_for_email: b.prepared_for_email ?? null, address: b.address ?? null, contact_source: b.contact_source ?? null };
       plog("project_contact_save", { id: P, ...b });
       res.writeHead(204, cors); return void res.end();
     }
     if (url.pathname === "/rest/v1/projects") {
-      const row = { id: P, name: "Demo Project (mock)", customer: "Mock Customer", address: contact.address, prepared_for_name: contact.prepared_for_name, prepared_for_email: contact.prepared_for_email };
+      const row = { id: P, name: "Demo Project (mock)", customer: "Mock Customer", address: contact.address, prepared_for_name: contact.prepared_for_name, prepared_for_email: contact.prepared_for_email, contact_source: contact.contact_source };
       return send(res, 200, String(req.headers.accept ?? "").includes("vnd.pgrst.object") ? row : [row]);
     }
     if (url.pathname === "/rest/v1/reports" && req.method === "GET") {
@@ -184,13 +201,25 @@ http.createServer((req, res) => {
       if (!bytes) return send(res, 404, { message: "not found" });
       res.writeHead(200, { ...cors, "content-type": "application/pdf" }); return void res.end(bytes);
     }
-    const rpc = /^\/rest\/v1\/rpc\/(create_report|queue_report_send|mark_report_sent|mark_report_failed)$/.exec(url.pathname);
+    if (url.pathname === "/storage/v1/object/reports" && req.method === "DELETE") {
+      const { prefixes } = JSON.parse(body || "{}") as { prefixes: string[] };
+      const gone = prefixes.filter((p) => objectBytes.delete(p)); gone.forEach((p) => objects.delete(p));
+      plog("report_files_removed", { id: gone.join(",") });
+      return send(res, 200, gone.map((name) => ({ name })));
+    }
+    if (url.pathname === "/storage/v1/object/list/reports" && req.method === "POST") {
+      const { prefix } = JSON.parse(body || "{}") as { prefix: string };
+      return send(res, 200, [...objectBytes.keys()].filter((k) => k.startsWith(`${prefix}/`) && !k.slice(prefix.length + 1).includes("/") && !k.includes("/issues/")).map((k) => ({ id: "x", name: k.slice(prefix.length + 1), created_at: "2020-01-01T00:00:00Z" })));
+    }
+    const rpc = /^\/rest\/v1\/rpc\/(create_report|queue_report_send|mark_report_sent|mark_report_failed|mark_report_printed|prune_reports)$/.exec(url.pathname);
     if (rpc && req.method === "POST") {                                   // the real functions' names and parameters (migration 1700)
       const b = JSON.parse(body || "{}") as Record<string, never>; const db = mockReportDb();
       try {
         if (rpc[1] === "create_report") return send(res, 200, await db.createReport({ id: b.p_id, projectId: b.p_project, type: b.p_type, path: b.p_path, bytes: b.p_bytes }));
         if (rpc[1] === "queue_report_send") return send(res, 200, await db.queueReportSend(b.p_report_id, b.p_recipient_name ?? null, b.p_recipient_email));
         if (rpc[1] === "mark_report_sent") { await db.markReportSent(b.p_report_id, b.p_message_id); return send(res, 200, null); }
+        if (rpc[1] === "mark_report_printed") { await db.markReportPrinted(b.p_report_id); return send(res, 200, null); }
+        if (rpc[1] === "prune_reports") return send(res, 200, await db.pruneReports(b.p_project, b.p_type, b.p_keep));
         await db.markReportFailed(b.p_report_id, b.p_error); return send(res, 200, null);
       } catch (e) { return send(res, 400, { code: "P0001", message: e instanceof Error ? e.message : "error" }); }
     }

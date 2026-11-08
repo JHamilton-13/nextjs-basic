@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { callReportsApi, canManageReports, describeReportProblem, reportStatusLabel, stuckQueued } from "../src/lib/reportsApi";
+import { callReportsApi, canManageReports, describeReportProblem, reportStatusLabel, savedLabel, stuckQueued } from "../src/lib/reportsApi";
 
 const P = "p1";
 describe("canManageReports (who sees the manager screens)", () => {
@@ -64,5 +64,15 @@ describe("report status", () => {
     expect(stuckQueued({ status: "queued", queued_at: "2026-09-12T11:49:00Z" }, now)).toBe(true);
     expect(stuckQueued({ status: "sent", queued_at: "2026-09-12T11:00:00Z" }, now)).toBe(false);
     expect(stuckQueued({ status: "queued", queued_at: null }, now)).toBe(true);
+  });
+});
+
+describe("savedLabel", () => {
+  it("only emailed or printed reports count as saved", () => {
+    expect(savedLabel({ status: "built", sent_at: null, printed_at: null })).toBe("preview");
+    expect(savedLabel({ status: "failed", sent_at: null, printed_at: null })).toBe("preview");
+    expect(savedLabel({ status: "sent", sent_at: "2026-09-01T10:00:00Z", printed_at: null })).toBe("sent");
+    expect(savedLabel({ status: "built", sent_at: null, printed_at: "2026-09-01T10:00:00Z" })).toBe("printed");
+    expect(savedLabel({ status: "sent", sent_at: "2026-09-01T10:00:00Z", printed_at: "2026-09-01T11:00:00Z" })).toBe("sent and printed");
   });
 });

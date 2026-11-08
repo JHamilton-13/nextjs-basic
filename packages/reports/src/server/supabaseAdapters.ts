@@ -49,6 +49,13 @@ export function supabaseDb(sb: SupabaseClient): ReportDb {
       return data as ReportRow;
     },
     async markReportSent(id, messageId) { const { error } = await sb.rpc("mark_report_sent", { p_report_id: id, p_message_id: messageId }); if (error) fail(error); },
+    async markReportPrinted(id) { const { error } = await sb.rpc("mark_report_printed", { p_report_id: id }); if (error) fail(error); },
+    async pruneReports(projectId, type, keepId) {
+      const { data, error } = await sb.rpc("prune_reports", { p_project: projectId, p_type: type, p_keep: keepId });
+      if (error) fail(error);
+      return (data ?? []) as string[];
+    },
+    async listReportPaths(projectId) { return (await rows<{ storage_path: string }>(sb.from("reports").select("storage_path").eq("project_id", projectId))).map((r) => r.storage_path); },
     async markReportFailed(id, message) { const { error } = await sb.rpc("mark_report_failed", { p_report_id: id, p_error: message }); if (error) fail(error); },
   };
 }
@@ -63,6 +70,16 @@ export function supabaseStorage(sb: SupabaseClient): ReportStorage {
     async upload(bucket, path, bytes) {
       const { error } = await sb.storage.from(bucket).upload(path, bytes, { contentType: "application/pdf", upsert: false });
       if (error) throw new ReportError("upload_failed", `Could not store the PDF: ${error.message}`);
+    },
+    async remove(bucket, paths) {
+      const { data, error } = await sb.storage.from(bucket).remove(paths);
+      if (error) return paths.length;
+      return Math.max(0, paths.length - (data?.length ?? 0));
+    },
+    async list(bucket, folder) {
+      const { data, error } = await sb.storage.from(bucket).list(folder, { limit: 1000 });
+      if (error || !data) return [];
+      return data.filter((f) => f.id !== null).map((f) => ({ path: `${folder}/${f.name}`, createdAt: f.created_at ?? null }));
     },
     async signedUrl(bucket, path, seconds) {
       const { data, error } = await sb.storage.from(bucket).createSignedUrl(path, seconds);

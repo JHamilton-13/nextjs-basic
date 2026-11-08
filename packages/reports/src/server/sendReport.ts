@@ -1,4 +1,5 @@
 import { isValidEmail } from "@phc/domain";
+import { cleanupReports } from "./cleanup";
 import { ReportError } from "./errors";
 import { safeFileName, type EmailTransport } from "./transport";
 import type { ReportDb, ReportRow, ReportStorage } from "./ports";
@@ -49,7 +50,18 @@ export async function sendReport(deps: SendDeps, reportId: string, to: { name: s
     // The email is out. Leaving the report queued (not failed) prevents an automatic resend; the manager is told to check first.
     throw new ReportError("sent_not_recorded", "The email was sent but could not be recorded. Check the Sent folder before trying again.");
   }
+  try { await cleanupReports({ db: deps.db, storage: deps.storage, ...(deps.now ? { now: deps.now } : {}) }, report.project_id, report.report_type, reportId); }
+  catch (e) { console.error("report cleanup failed", e instanceof Error ? e.message : e); }   // the email is out; tidying up must never turn that into an error
   return "sent";
+}
+
+/** The manager pressed Print: record it, then keep only this report as the saved one of its type. */
+export async function printReport(deps: { db: ReportDb; storage: ReportStorage; now?: () => Date }, reportId: string): Promise<void> {
+  const report = await deps.db.getReport(reportId);
+  if (!report) throw new ReportError("report_not_found", "That report was not found, or you do not have access to it.");
+  await deps.db.markReportPrinted(reportId);
+  try { await cleanupReports(deps, report.project_id, report.report_type, reportId); }
+  catch (e) { console.error("report cleanup failed", e instanceof Error ? e.message : e); }
 }
 
 /** Sends the PDF to the signed-in manager only, so they can see exactly what the builder would get. Does not change the report's status. */

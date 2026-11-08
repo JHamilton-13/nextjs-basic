@@ -5,6 +5,7 @@ import { RoomStatusDocument } from "../RoomStatusDocument";
 import { LOGO_FILE } from "../fonts";
 import { prepareImage } from "../prepareImage";
 import { MAX_PDF_BYTES, renderReport } from "../render";
+import { cleanupReports } from "./cleanup";
 import { ReportTooLargeError, ReportError } from "./errors";
 import { loadBuilderAuditData, loadRoomStatusData } from "./loadReportData";
 import type { ReportDb, ReportRow, ReportStorage } from "./ports";
@@ -15,7 +16,7 @@ export interface BuildDeps {
   db: ReportDb; storage: ReportStorage; timezone: string;
   now?: () => Date; newId?: () => string; logo?: Buffer; maxBytes?: number;
 }
-export interface BuildResult { reportId: string; bytes: number; identified: number; incomplete: number; photosMissing: number }
+export interface BuildResult { reportId: string; bytes: number; identified: number; incomplete: number; photosMissing: number; removedReports: number }
 
 /** Loads everything the signed-in manager can see, renders the PDF, stores it, and records one report row (status built). */
 export async function buildReport(deps: BuildDeps, projectId: string, type: ReportRow["report_type"]): Promise<BuildResult> {
@@ -60,5 +61,8 @@ export async function buildReport(deps: BuildDeps, projectId: string, type: Repo
   const path = `${projectId}/${reportId}.pdf`;
   await storage.upload("reports", path, pdf);
   await db.createReport({ id: reportId, projectId, type, path, bytes: pdf.length });
-  return { reportId, bytes: pdf.length, identified, incomplete, photosMissing };
+  // the new build replaces the last preview of its type (a saved report stays until something newer is sent or printed); never fails the build
+  let removedReports = 0;
+  try { removedReports = (await cleanupReports({ db, storage, now }, projectId, type, reportId)).removedReports; } catch (e) { console.error("report cleanup failed", e instanceof Error ? e.message : e); }
+  return { reportId, bytes: pdf.length, identified, incomplete, photosMissing, removedReports };
 }
