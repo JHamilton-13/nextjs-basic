@@ -65,3 +65,16 @@ Delete the PHONE TRIAL project data (ask me; audit history is protected from del
 6. Turn on airplane mode. Tick two pills. Close the app fully, reopen it: the ticks must still be there, shown as waiting. Turn airplane mode off: they sync and the badge returns to "All synced".
 7. Check the Sync queue tab lists them as "Room checklist".
 8. Send back: device, step number, what you expected vs what happened, a screenshot for anything odd (is anything hard to tap? any pill label cut off? anything too small to read outdoors?).
+
+## Issues: add, photograph, complete, void (current installer build, ~20 minutes)
+Use the trial project. You need your phone, and ideally a second person (or a manager sign-in) for step 9.
+1. Open a room. Under the checklist you should see **Issues**, an **Add issue** button, five small count chips (Pre-Install, Punch Item, Missing part, Damaged part, Touch Up) and an **Open | Completed** switch.
+2. Tap **Add issue**. Choose **Service**, then **Damaged part**, and type a title. Save must stay greyed out and say "A damaged part needs a photo". Tap **Take a photo** and take a real picture (try one in portrait). The warning goes away. Save.
+3. The issue appears with a "Damaged part" label, who raised it and when, and a "waiting to sync" label that then disappears. The photo should say "Uploaded".
+4. Tap **Mark up** on the photo and draw with your finger (pen, highlighter, text, erase). Save the copy. You should now see the original and a marked-up copy.
+5. Add a **Pre-Install Corrections** issue. Save must stay greyed out until you pick a **trade**. Pick one and save. The trade label shows on the card.
+6. Turn on **airplane mode**. Add a Pre-Install Correction (the trade list must still work) and a Touch-up with a photo from **Choose from photos**. Both show "waiting to sync". Close the app completely and reopen it: both are still there.
+7. Turn airplane mode off. Everything syncs and the labels clear. Check the Sync queue tab lists "Issue ... raised" and the photos as synced.
+8. On an issue you raised: **Edit** (change the title and trade), **Complete** (add a note), switch to **Completed** to find it, then **Reopen** it, then **Void** another one. A voided issue disappears from both lists.
+9. As a different installer (not the one who raised an issue) you can see it and its photos but there must be no Complete, Edit or Void buttons. As a manager there should be.
+10. Send back: device and iOS/Android version, the step number, what you expected and what happened, and a screenshot for anything odd. Check especially: is anything hard to tap with a glove, does the keyboard cover the Save button, do portrait photos look sideways, is any label cut off?

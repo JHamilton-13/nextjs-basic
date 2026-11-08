@@ -35,22 +35,23 @@ export function supabaseTransport(sb: SupabaseClient, db: Db): Transport {
   }
 
   async function photo(op: OperationEnvelope): Promise<OperationResult> {
-    const p = op.payload as { action: string; projectId: string; auditId: string; version?: number; annotatedFrom?: string; annotations?: unknown; itemKey: string | null; storagePath: string; sha256: string; bytes: number; capturedAt: string; mime?: string };
+    const p = op.payload as { action: string; projectId: string; auditId?: string; issueId?: string; version?: number; annotatedFrom?: string; annotations?: unknown; itemKey?: string | null; storagePath: string; sha256: string; bytes: number; capturedAt: string; mime?: string };
+    // A photo on an issue goes to its own table, storage area and confirm step; audit photos are unchanged.
+    const forIssue = typeof p.issueId === "string" && p.issueId !== "";
+    const bucket = forIssue ? "issue-photos" : "audit-photos";
     try {
       if (p.action === "register") {
-        const { error, status } = await sb.from("photos").insert({
-          id: op.entityId, project_id: p.projectId, audit_id: p.auditId, version: p.version ?? 1, item_key: p.itemKey, storage_path: p.storagePath,
-          checksum_sha256: p.sha256, bytes: p.bytes, captured_by: op.actor, captured_at: p.capturedAt,
-          // only sent for annotated copies, so ordinary photos keep working on a database that predates annotations
-          ...(p.annotatedFrom ? { annotated_from: p.annotatedFrom, annotations: p.annotations } : {}),
-        });
+        const annotated = p.annotatedFrom ? { annotated_from: p.annotatedFrom, annotations: p.annotations } : {}; // only sent for annotated copies, so ordinary photos keep working on a database that predates annotations
+        const { error, status } = forIssue
+          ? await sb.from("issue_photos").insert({ id: op.entityId, project_id: p.projectId, issue_id: p.issueId, storage_path: p.storagePath, checksum_sha256: p.sha256, bytes: p.bytes, captured_by: op.actor, captured_at: p.capturedAt, ...annotated })
+          : await sb.from("photos").insert({ id: op.entityId, project_id: p.projectId, audit_id: p.auditId, version: p.version ?? 1, item_key: p.itemKey, storage_path: p.storagePath, checksum_sha256: p.sha256, bytes: p.bytes, captured_by: op.actor, captured_at: p.capturedAt, ...annotated });
         if (error && error.code !== "23505") throw classify({ code: error.code, message: error.message, status }); // 23505 = already registered (a retry)
         return APPLIED;
       }
       if (p.action === "upload") {
         const local = await db.get("photos", op.entityId);
         if (!local?.blob) return APPLIED; // already uploaded and cleaned up
-        const { error } = await sb.storage.from("audit-photos").upload(p.storagePath, local.blob, { contentType: p.mime ?? "image/jpeg", upsert: false });
+        const { error } = await sb.storage.from(bucket).upload(p.storagePath, local.blob, { contentType: p.mime ?? "image/jpeg", upsert: false });
         if (error) {
           const f = storageFailure(error);
           if (f.status === 409 || /already exists|duplicate/i.test(f.message ?? "")) return APPLIED; // a retry after a lost response
@@ -59,7 +60,7 @@ export function supabaseTransport(sb: SupabaseClient, db: Db): Transport {
         return APPLIED;
       }
       if (p.action === "confirm") {
-        const { error, status } = await sb.rpc("confirm_photo", { p_photo_id: op.entityId });
+        const { error, status } = await sb.rpc(forIssue ? "confirm_issue_photo" : "confirm_photo", { p_photo_id: op.entityId });
         if (error) {
           // "upload_not_found" can be a brief delay after upload: retry. Anything else (size_mismatch, permission) is permanent.
           if (/upload_not_found/.test(error.message)) throw new TransportError("server", error.message, true);

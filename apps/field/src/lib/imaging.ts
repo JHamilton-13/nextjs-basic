@@ -37,3 +37,13 @@ export async function flattenAnnotated(base: Blob, shapes: Shape[]): Promise<{ b
   bmp.close();
   return { blob, thumb: t.toDataURL("image/jpeg", 0.6), mime: "image/jpeg" };
 }
+
+/** A 160 px JPEG preview (data URL) of a downloaded photo. */
+export async function makeThumb(blob: Blob): Promise<string> {
+  const bmp = await createImageBitmap(blob, { imageOrientation: "from-image" });
+  const ts = Math.min(1, 160 / Math.max(bmp.width, bmp.height));
+  const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(bmp.width * ts)); c.height = Math.max(1, Math.round(bmp.height * ts));
+  c.getContext("2d")!.drawImage(bmp, 0, 0, c.width, c.height);
+  bmp.close();
+  return c.toDataURL("image/jpeg", 0.6);
+}

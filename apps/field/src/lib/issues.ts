@@ -1,25 +1,28 @@
 import { canChangeIssue, canCompleteIssue, err, issueSaveBlockers, ok, requiresTrade, type IssueKind, type OperationEnvelope, type Result } from "@phc/domain";
 import type { Db } from "./db";
 import { newOutboxRecord } from "./outbox";
-import { hex, MAX_UPLOAD_BYTES, type Compressor } from "./photos";
+import { hex, MAX_UPLOAD_BYTES, queueIssuePhoto, type IssueCtx } from "./photos";
 import type { LocalIssue, LocalPhoto } from "./types";
 
 export type IssueStatus = "open" | "completed" | "void";
 export const issueStatus = (i: LocalIssue): IssueStatus => (i.voidedAt ? "void" : i.completedAt ? "completed" : "open");
 
-export interface IssueCtx { db: Db; userId: string; userLabel: string; compress: Compressor; newId: () => string; now: () => string; notify: () => void }
+export type { IssueCtx };
 export type IssueError = {
   code: "blocked" | "room_not_cached" | "trade_not_found" | "trade_inactive" | "compress_failed" | "file_too_large" | "issue_not_found" | "not_allowed"
     | "nothing_to_change" | "issue_completed" | "already_completed" | "not_completed" | "issue_void" | "photo_required";
   message: string;
 };
 
-/** What my role on a project lets me do. With no role stored yet (never synced since the update) the raiser may still act; the server decides. */
-async function mayChange(db: Db, issue: LocalIssue, userId: string): Promise<boolean> {
-  const m = (await db.get("meta", "roles")) as { isAdmin: boolean; byProject: Record<string, string> } | undefined;
-  const role = m ? (m.byProject[issue.projectId] ?? null) : "installer";
-  return canChangeIssue({ role, isRaiser: issue.raisedBy === userId, isAdmin: m?.isAdmin ?? false });
+export interface MyRoles { isAdmin: boolean; byProject: Record<string, string> }
+
+/** May this person change this issue? With no role stored yet (never synced since the update) the raiser may still act; the server decides. */
+export function mayChangeIssue(roles: MyRoles | undefined, issue: Pick<LocalIssue, "projectId" | "raisedBy">, userId: string): boolean {
+  const role = roles ? (roles.byProject[issue.projectId] ?? null) : "installer";
+  return canChangeIssue({ role, isRaiser: issue.raisedBy === userId, isAdmin: roles?.isAdmin ?? false });
 }
+export const loadRoles = async (db: Db) => (await db.get("meta", "roles")) as MyRoles | undefined;
+const mayChange = async (db: Db, issue: LocalIssue, userId: string) => mayChangeIssue(await loadRoles(db), issue, userId);
 
 /** An active trade is required for a NEW choice; a trade that was deactivated after it was chosen may stay on an existing issue. */
 async function checkTrade(db: Db, tradeId: string): Promise<IssueError | null> {
@@ -78,27 +81,6 @@ export async function createIssue(
   await tx.done;
   ctx.notify();
   return ok(issue);
-}
-
-/** Minimal shape of the transaction these helpers write to (keeps them usable from a transaction that also touches other stores). */
-interface PhotoTx { objectStore(name: "photos" | "outbox"): { add(v: any): Promise<unknown> } }
-
-/**
- * Stores one issue photo and queues its register (data lane), upload and confirm (files lane, each waiting for the step before).
- * The queue group is the room, so the issue's own operations and its photos stay in order. Returns the writes to await.
- */
-export function queueIssuePhoto(ctx: { newId: () => string; userId: string }, tx: PhotoTx, photo: LocalPhoto, roomId: string): Promise<unknown>[] {
-  const base = { entity: "photo", entityId: photo.id, baseVersion: 0, createdAt: photo.capturedAt, actor: ctx.userId };
-  const common = { projectId: photo.projectId, issueId: photo.issueId, storagePath: photo.storagePath, sha256: photo.sha256, bytes: photo.bytes, capturedAt: photo.capturedAt };
-  const reg: OperationEnvelope = { ...base, opId: ctx.newId(), payload: { action: "register", ...common, ...(photo.annotatedFrom ? { annotatedFrom: photo.annotatedFrom, annotations: photo.annotations } : {}) } };
-  const up: OperationEnvelope = { ...base, opId: ctx.newId(), payload: { action: "upload", ...common, mime: photo.mime } };
-  const conf: OperationEnvelope = { ...base, opId: ctx.newId(), payload: { action: "confirm", ...common } };
-  return [
-    tx.objectStore("photos").add(photo),
-    tx.objectStore("outbox").add(newOutboxRecord(reg, roomId)),
-    tx.objectStore("outbox").add(newOutboxRecord(up, roomId, { lane: "files", after: [reg.opId] })),
-    tx.objectStore("outbox").add(newOutboxRecord(conf, roomId, { lane: "files", after: [up.opId] })),
-  ];
 }
 
 // ------------------------------------------------------------------------------------------------------------------

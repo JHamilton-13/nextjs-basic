@@ -8,6 +8,7 @@ export function ProjectView({ ctx, projectId }: { ctx: AppCtx; projectId: string
     project: await ctx.db.get("projects", projectId),
     rooms: (await ctx.db.getAllFromIndex("rooms", "by_project", projectId)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
     checks: (await ctx.db.getAll("room_checks")).filter((c) => c.projectId === projectId),
+    issues: (await ctx.db.getAll("issues")).filter((i) => i.projectId === projectId),
     queue: await ctx.outbox.list(),
   }), [projectId]);
   if (!data) return <p>Loading…</p>;
@@ -20,7 +21,7 @@ export function ProjectView({ ctx, projectId }: { ctx: AppCtx; projectId: string
       <p className="muted">{[project.customer, project.address].filter(Boolean).join(" · ") || "No customer or address"}</p>
       {rooms.length === 0 && <p className="muted">No rooms on this project yet.</p>}
       {rooms.map((room) => (
-        <RoomCard key={room.id} ctx={ctx} room={room} checks={data.checks.filter((c) => c.roomId === room.id)} queue={data.queue.filter((q) => q.auditId === room.id)} />
+        <RoomCard key={room.id} ctx={ctx} room={room} checks={data.checks.filter((c) => c.roomId === room.id)} issues={data.issues.filter((i) => i.roomId === room.id)} queue={data.queue.filter((q) => q.auditId === room.id)} />
       ))}
     </>
   );

@@ -56,7 +56,7 @@ async function runDevice(browser, name) {
   const shot = (n) => page.screenshot({ path: path.join(SHOTS, `${name.replace(/\s+/g, "-")}-${n}.png`), scale: "css", fullPage: false });
   const tag = name;
 
-  await fetch(`${MOCK}/__control`, { method: "POST", body: JSON.stringify({ resetChecks: true }) });   // each device starts with an empty checklist on the mock server
+  await fetch(`${MOCK}/__control`, { method: "POST", body: JSON.stringify({ resetChecks: true, resetIssues: true }) });   // each device starts with an empty checklist on the mock server
   await page.goto(APP);
   await page.getByTestId("project-card").waitFor();
   check(await page.evaluate(() => !!document.querySelector('meta[name="viewport"][content*="viewport-fit=cover"]')), `${tag}: viewport meta allows full-screen (notch) layout`);
@@ -120,6 +120,139 @@ async function runDevice(browser, name) {
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await waitFor(async () => (await page.locator('[data-room="Kitchen"]').getByTestId("pill-hardware").getAttribute("data-pending")) === "no", "offline tick synced", 20000);
   check(true, `${tag}: the offline tick synced when the connection returned`);
+  // ---- issues: add, photos, markup, complete / reopen / edit / void, offline, other people's issues ----
+  const K = page.locator('[data-room="Kitchen"]');
+  const cardBy = (title) => K.getByTestId("issue-card").filter({ hasText: title });
+  const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.stringify(c) });
+  const serverLog = async () => (await (await page.request.get(`${MOCK}/__state`)).json()).log;
+  const syncedNow = () => waitFor(async () => (await page.getByTestId("sync-status").innerText()) === "All synced", "all synced", 20000);
+  await K.getByTestId("issues").scrollIntoViewIfNeeded();
+  check((await K.getByTestId("issues-empty").count()) === 0 && (await cardBy("Scuffed panel").count()) === 1, `${tag}: an issue raised by another installer is visible on the room`);
+  check((await cardBy("Scuffed panel").getByTestId("issue-raised").innerText()).includes("Sam Other"), `${tag}: it shows who raised it and when`);
+  check((await cardBy("Scuffed panel").getByTestId("issue-complete").count()) === 0 && (await cardBy("Scuffed panel").getByTestId("issue-edit").count()) === 0 && (await cardBy("Scuffed panel").getByTestId("issue-void").count()) === 0, `${tag}: an installer cannot complete, edit or void someone else's issue (no buttons)`);
+  await waitFor(async () => (await cardBy("Scuffed panel").locator("figure img").count()) === 1, "preview of another person's photo", 20000);
+  check(true, `${tag}: another person's photo shows a preview downloaded on demand`);
+  check((await K.getByTestId("count-touch_up").innerText()).includes("1"), `${tag}: counts per kind (Touch Up 1)`);
+
+  // Damaged part: needs a photo
+  await K.getByTestId("add-issue").tap();
+  const sheet = page.getByTestId("add-issue-sheet");
+  await sheet.waitFor();
+  check(await sheet.getByTestId("issue-save").isDisabled(), `${tag}: Save is disabled until the rules are met`);
+  await audit(page, `${tag} add issue (empty)`); await shot("9a-add-issue");
+  await sheet.getByTestId("cat-service").tap();
+  await sheet.getByTestId("kind-damaged_part").tap();
+  await sheet.getByTestId("issue-title-input").fill("Door chipped on delivery");
+  await sheet.getByTestId("issue-desc-input").fill("Bottom corner of the upper door");
+  check((await sheet.getByTestId("issue-blockers").innerText()).includes("A damaged part needs a photo") && (await sheet.getByTestId("issue-save").isDisabled()), `${tag}: a Damaged part cannot be saved without a photo (the reason is shown)`);
+  await sheet.getByTestId("issue-photo-take").setInputFiles(BIG);
+  await waitFor(async () => (await sheet.getByTestId("issue-blockers").count()) === 0, "photo accepted");
+  check(await sheet.getByTestId("issue-save").isEnabled(), `${tag}: with a photo the Damaged part can be saved`);
+  await audit(page, `${tag} add issue (filled)`); await shot("9b-add-issue-filled");
+  await sheet.getByTestId("issue-save").tap();
+  await sheet.waitFor({ state: "detached" });
+  const dmg = cardBy("Door chipped on delivery");
+  await dmg.waitFor();
+  check((await dmg.getAttribute("data-kind")) === "damaged_part" && (await dmg.getByTestId("issue-kind").innerText()) === "Damaged part", `${tag}: the Damaged part issue is on the room`);
+  await syncedNow();
+  await waitFor(async () => (await serverLog()).some((l) => l.entity === "room_issue" && l.action === "create" && l.outcome === "applied"), "issue create on server");
+  await waitFor(async () => (await dmg.getByTestId("photo-status").first().innerText()) === "Uploaded", "issue photo uploaded", 30000);
+  check(true, `${tag}: the issue and its photo reached the server (created, registered, uploaded, confirmed)`);
+
+  // Touch-up and Pre-Install, the latter with the network OFF (trade list comes from the phone)
+  await K.getByTestId("add-issue").tap();
+  await sheet.getByTestId("cat-touch_ups").tap();
+  check((await sheet.locator('[data-testid^="kind-"]').count()) === 0, `${tag}: Touch-ups has a single kind, chosen for you`);
+  await sheet.getByTestId("issue-title-input").fill("Scratch on end panel");
+  await sheet.getByTestId("issue-save").tap();
+  await sheet.waitFor({ state: "detached" });
+  await context.setOffline(true);
+  await K.getByTestId("add-issue").tap();
+  await sheet.getByTestId("cat-pre_install_corrections").tap();
+  check((await sheet.getByTestId("trade-list").locator("button").count()) === 3 && (await sheet.getByTestId("trade-roofing").count()) === 0, `${tag}: the trade list works with no connection and leaves out the deactivated trade`);
+  await sheet.getByTestId("issue-title-input").fill("Water line in the wrong place");
+  check((await sheet.getByTestId("issue-blockers").innerText()).includes("Add a trade") && (await sheet.getByTestId("issue-save").isDisabled()), `${tag}: a Pre-Install Correction cannot be saved without a trade`);
+  await sheet.getByTestId("trade-plumbing").tap();
+  await sheet.getByTestId("issue-save").tap();
+  await sheet.waitFor({ state: "detached" });
+  const pre = cardBy("Water line in the wrong place");
+  check((await pre.getByTestId("issue-trade").innerText()) === "Plumbing" && (await pre.getByTestId("issue-pending").count()) === 1, `${tag}: raised offline: shows its trade and "waiting to sync"`);
+  await page.reload();
+  await page.getByTestId("project-card").waitFor();
+  await page.getByTestId("open-project").click();
+  await page.locator('[data-room="Kitchen"]').getByTestId("issue-card").filter({ hasText: "Water line in the wrong place" }).waitFor();
+  check(true, `${tag}: the offline issue is still there after a reload`);
+  await context.setOffline(false);
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await waitFor(async () => (await K.getByTestId("issue-card").filter({ hasText: "Water line in the wrong place" }).getByTestId("issue-pending").count()) === 0, "offline issue synced", 25000);
+  await waitFor(async () => (await serverLog()).filter((l) => l.entity === "room_issue" && l.action === "create" && l.outcome === "applied").length >= 3, "three issues created on the server");
+  check(true, `${tag}: the issue raised offline synced when the connection returned`);
+  for (const [k, n] of [["pre_install_correction", 1], ["damaged_part", 1], ["touch_up", 2], ["punch_item", 0], ["missing_part", 0]]) {
+    check((await K.getByTestId(`count-${k}`).innerText()).endsWith(String(n)), `${tag}: count for ${k} is ${n}`);
+  }
+
+  // Markup on an issue photo (after upload, so the original is fetched from storage), pen stroke, saved as a separate copy
+  const dmg2 = cardBy("Door chipped on delivery");
+  await dmg2.getByTestId("annotate-btn").tap();
+  const cdpI = await context.newCDPSession(page);
+  const cv = page.getByTestId("annotate-canvas");
+  await waitFor(async () => (await cv.evaluate((c) => c.width)) > 0 && (await cv.boundingBox()), "issue annotation canvas");
+  const bx = await cv.boundingBox();
+  await touchStroke(cdpI, [[bx.x + bx.width * 0.2, bx.y + bx.height * 0.2], [bx.x + bx.width * 0.5, bx.y + bx.height * 0.4], [bx.x + bx.width * 0.7, bx.y + bx.height * 0.7]]);
+  await page.getByTestId("save-annotation").tap();
+  await waitFor(async () => (await dmg2.getByTestId("photo-thumb").count()) === 2, "marked-up copy on the issue");
+  check((await dmg2.locator('[data-annotated="yes"]').count()) === 1, `${tag}: a marked-up copy is saved next to the original photo on the issue`);
+  await syncedNow();
+  await waitFor(async () => (await serverLog()).length > 0 && (await (await page.request.get(`${MOCK}/__photos`)).json()).objects && true, "photos listed");
+  check(true, `${tag}: the marked-up copy synced`);
+
+  // Complete, reopen, edit, void
+  await dmg2.getByTestId("issue-complete").tap();
+  await dmg2.getByTestId("issue-note").fill("Replacement door fitted");
+  await dmg2.getByTestId("issue-complete-confirm").tap();
+  await waitFor(async () => (await K.getByTestId("issue-card").filter({ hasText: "Door chipped on delivery" }).count()) === 0, "completed issue leaves the Open list");
+  check((await K.getByTestId("count-damaged_part").innerText()).endsWith("0"), `${tag}: completing an issue takes it out of the open count`);
+  await K.getByTestId("view-completed").tap();
+  const done = cardBy("Door chipped on delivery");
+  await done.waitFor();
+  check((await done.getByTestId("issue-completed").innerText()).includes("Pat Installer") && (await done.getByTestId("issue-completed").innerText()).includes("Replacement door fitted"), `${tag}: the Completed view shows who completed it, when, and the note`);
+  await done.getByTestId("issue-reopen").tap();
+  await waitFor(async () => (await K.getByTestId("issue-card").filter({ hasText: "Door chipped on delivery" }).count()) === 0, "reopened issue leaves the Completed list");
+  await K.getByTestId("view-open").tap();
+  await cardBy("Door chipped on delivery").waitFor();
+  check(true, `${tag}: Reopen puts it back in the Open list`);
+
+  await pre.getByTestId("issue-edit").tap();
+  await pre.getByTestId("edit-title").fill("Water line moved 6 in. left");
+  await pre.getByTestId("edit-trade-electrical").tap();
+  await pre.getByTestId("edit-save").tap();
+  await cardBy("Water line moved 6 in. left").waitFor();
+  check((await cardBy("Water line moved 6 in. left").getByTestId("issue-trade").innerText()) === "Electrical", `${tag}: Edit changes the title and the trade`);
+
+  const touch = cardBy("Scratch on end panel");
+  await touch.getByTestId("issue-void").tap();
+  await touch.getByTestId("issue-note").fill("Raised in the wrong room");
+  await touch.getByTestId("issue-void-confirm").tap();
+  await waitFor(async () => (await cardBy("Scratch on end panel").count()) === 0, "voided issue disappears");
+  await K.getByTestId("view-completed").tap();
+  check((await cardBy("Scratch on end panel").count()) === 0, `${tag}: a voided issue is shown in neither the Open nor the Completed list`);
+  await K.getByTestId("view-open").tap();
+  await syncedNow();
+  await audit(page, `${tag} issues on a room`); await shot("9c-issues");
+  const ops = await serverLog();
+  check(["update", "complete", "reopen", "void"].every((a) => ops.some((l) => l.entity === "room_issue" && l.action === a && l.outcome === "applied")), `${tag}: edit, complete, reopen and void all reached the server`);
+
+  // A manager sees the change buttons on someone else's issue
+  await control({ role: "project_manager" });
+  await page.reload();
+  await page.getByTestId("project-card").waitFor();
+  await page.getByTestId("open-project").click();
+  const sam = page.locator('[data-room="Kitchen"]').getByTestId("issue-card").filter({ hasText: "Scuffed panel" });
+  await sam.waitFor();
+  await waitFor(async () => (await sam.getByTestId("issue-complete").count()) === 1, "manager buttons after sync", 20000);
+  check((await sam.getByTestId("issue-edit").count()) === 1 && (await sam.getByTestId("issue-void").count()) === 1, `${tag}: a manager can complete, edit and void another person's issue`);
+  await control({ role: "installer" });
+
   await page.getByTestId("back-projects").click();
   await page.getByTestId("project-card").waitFor();
 
@@ -143,7 +276,7 @@ async function runDevice(browser, name) {
   await outlets.getByTestId("photo-thumb").waitFor({ timeout: 30000 });
   const secs = (Date.now() - t0) / 1000;
   check(secs < 10, `${tag}: a 12-megapixel photo is processed in under 10 s (took ${secs.toFixed(1)} s)`);
-  const info = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = async () => { const p = q.result[0]; const bmp = await createImageBitmap(p.blob); resolve({ w: bmp.width, h: bmp.height, bytes: p.bytes, orig: p.originalBlob ? p.originalBlob.size : 0, type: p.mime }); }; }; }));
+  const info = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = async () => { const p = q.result.find((x) => x.auditId && !x.annotatedFrom); const bmp = await createImageBitmap(p.blob); resolve({ w: bmp.width, h: bmp.height, bytes: p.bytes, orig: p.originalBlob ? p.originalBlob.size : 0, type: p.mime }); }; }; }));
   check(Math.max(info.w, info.h) <= 2048 && info.bytes <= 10 * 1024 * 1024 && info.type === "image/jpeg", `${tag}: the stored photo is a JPEG, long edge ${Math.max(info.w, info.h)} px (max 2048), ${(info.bytes / 1024).toFixed(0)} KiB (original ${(info.orig / 1048576).toFixed(1)} MiB kept until uploaded)`);
   check(info.h > info.w, `${tag}: the photo's rotation flag was honoured (stored upright ${info.w}x${info.h}, not sideways)`);
 
@@ -180,7 +313,7 @@ async function runDevice(browser, name) {
   await page.getByTestId("save-annotation").click();
   await waitFor(async () => (await outlets.getByTestId("photo-thumb").count()) === 2, "marked-up copy");
   check(true, `${tag}: pen + highlighter + text saved as a marked-up copy from touch input`);
-  const marks = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = () => resolve(q.result.filter((p) => p.annotatedFrom).map((p) => p.annotations.map((a) => a.type + ":" + (a.points ? a.points.length : 0)))); }; }));
+  const marks = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = () => resolve(q.result.filter((p) => p.auditId && p.annotatedFrom).map((p) => p.annotations.map((a) => a.type + ":" + (a.points ? a.points.length : 0)))); }; }));
   check(marks.length === 1 && marks[0].length === 3 && marks[0][0].startsWith("pen:") && Number(marks[0][0].split(":")[1]) >= 4, `${tag}: the finger path was kept as an editable stroke (${marks[0].join(", ")})`);
 
   // ---- offline on a phone ----

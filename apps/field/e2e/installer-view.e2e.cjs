@@ -50,8 +50,20 @@ async function waitFor(fn, what, ms = 15000) { const t = Date.now(); for (;;) { 
     await waitFor(async () => (await kitchen.getByTestId("pill-clean").getAttribute("data-state")) === "done", "tick");
     await waitFor(async () => (await kitchen.getByTestId("pill-clean").getAttribute("data-pending")) === "no", "tick synced");
     check(true, "installer build: a checklist tick works and syncs");
+    check((await kitchen.getByTestId("add-issue").isVisible()) && (await kitchen.getByTestId("view-open").isVisible()) && (await kitchen.getByTestId("view-completed").isVisible()), "installer build: each room has Add issue and an Open / Completed switch");
+    await kitchen.getByTestId("add-issue").tap();
+    const sheet = page.getByTestId("add-issue-sheet");
+    await sheet.getByTestId("cat-touch_ups").tap();
+    await sheet.getByTestId("issue-title-input").fill("Scuff on the left end panel");
+    await sheet.getByTestId("issue-save").tap();
+    await sheet.waitFor({ state: "detached" });
+    await kitchen.getByTestId("issue-card").filter({ hasText: "Scuff on the left end panel" }).waitFor();
+    await waitFor(async () => (await kitchen.getByTestId("issue-card").filter({ hasText: "Scuff on the left end panel" }).getByTestId("issue-pending").count()) === 0, "issue synced");
+    check(!/audit|measurement|tolerance|critical|MEP/i.test(await page.locator("main").innerText()), "installer build: still no audit, measurement or tolerance wording with the issue screens in place");
+    check(true, "installer build: an issue can be raised and syncs");
     await page.getByRole("button", { name: "Sync queue" }).tap();
-    check((await page.getByTestId("queue-row").first().innerText()).includes("Room checklist"), "installer build: the Sync queue describes the tick as 'Room checklist'");
+    const queueText = await page.getByTestId("queue-row").allInnerTexts();
+    check(queueText.some((t) => t.includes("Room checklist")) && queueText.some((t) => t.includes("Issue") && t.includes("raised")), "installer build: the Sync queue describes the tick as 'Room checklist' and the issue as 'Issue ... raised'");
   } finally { await browser?.close().catch(() => {}); killAll(); }
   const bad = results.filter((r) => !r.ok);
   if (problems.length) { console.log(`\nINSTALLER VIEW CHECKS FAILED: ${problems.length}`); process.exit(1); }

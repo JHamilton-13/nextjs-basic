@@ -2,7 +2,8 @@ import { useState } from "react";
 import type { AppCtx } from "../App";
 import { CARD_FIELDS, fieldsFor, hasTBD, MORE_FIELDS } from "../lib/roomFields";
 import { checkProgress, ROOM_CHECK_ITEMS, ROOM_CHECK_LONG, setRoomCheck } from "../lib/roomChecks";
-import type { CheckState, LocalRoomCheck, OutboxRecord, RoomRow } from "../lib/types";
+import type { CheckState, LocalIssue, LocalRoomCheck, OutboxRecord, RoomRow } from "../lib/types";
+import { IssueSection } from "./IssueSection";
 import { fmtWhen } from "./when";
 
 const SOURCE: Record<string, string> = { cockpit: "Cockpit", masterfile: "the master file", warehouse_tracker: "the Warehouse Tracker", manual: "entered by hand" };
@@ -13,14 +14,14 @@ function Details({ pairs }: { pairs: { key: string; label: string; value: string
 }
 
 /** One room: its details (read-only) and the completion checklist (tap a pill to mark it done). */
-export function RoomCard({ ctx, room, checks, queue }: { ctx: AppCtx; room: RoomRow; checks: LocalRoomCheck[]; queue: OutboxRecord[] }) {
+export function RoomCard({ ctx, room, checks, issues, queue }: { ctx: AppCtx; room: RoomRow; checks: LocalRoomCheck[]; issues: LocalIssue[]; queue: OutboxRecord[] }) {
   const [open, setOpen] = useState<string | null>(null);
   const [asking, setAsking] = useState(false);
   const [note, setNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const byKey = new Map(checks.map((c) => [c.itemKey, c]));
   const prog = checkProgress(checks);
-  const attention = queue.some((q) => q.state.status === "conflict" || (q.state.status === "failed" && !q.state.retryable));
+  const attention = queue.some((q) => q.op.entity === "room_check" && (q.state.status === "conflict" || (q.state.status === "failed" && !q.state.retryable)));
   const card = fieldsFor(room.details, CARD_FIELDS);
   const more = fieldsFor(room.details, MORE_FIELDS);
 
@@ -92,6 +93,7 @@ export function RoomCard({ ctx, room, checks, queue }: { ctx: AppCtx; room: Room
       {checks.filter((c) => c.state === "not_done" && c.note).map((c) => (
         <p className="notdone-note" key={c.itemKey} data-testid="notdone-line"><strong>{ROOM_CHECK_ITEMS.find((i) => i.key === c.itemKey)?.label}:</strong> {c.note} <small className="muted">— {c.by ?? "someone"}, {fmtWhen(c.at)}</small></p>
       ))}
+      <IssueSection ctx={ctx} room={room} issues={issues} queue={queue} />
     </section>
   );
 }

@@ -184,7 +184,7 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     check((await page.getByTestId("readiness").innerText()) === "NOT READY", "the server's own readiness (NOT READY) is shown, marked 'confirmed by the server'");
     await openSection("mep");
     check((await page.getByTestId("item-outlets").getByTestId("photo-status").innerText()) === "Uploaded", "photo shows 'Uploaded' only after the server confirmed it");
-    const local = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = () => resolve(q.result.map((p) => ({ confirmed: p.confirmed, hasBlob: !!p.blob, hasOriginal: !!p.originalBlob, hasThumb: !!p.thumb }))); }; }));
+    const local = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = () => resolve(q.result.filter((p) => p.auditId).map((p) => ({ confirmed: p.confirmed, hasBlob: !!p.blob, hasOriginal: !!p.originalBlob, hasThumb: !!p.thumb }))); }; }));
     check(local.length === 1 && local[0].confirmed && !local[0].hasBlob && !local[0].hasOriginal && local[0].hasThumb, "after confirmation the heavy copies are removed from the device (preview kept)");
 
     console.log("== who and when are recorded on the audit and on each issue");
@@ -283,7 +283,7 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     await waitFor(async () => (await page.getByTestId("readiness").innerText()) === "NOT READY", "version 1 shows NOT READY");
     check(true, "version 1 still shows the server's NOT READY");
     await page.getByTestId("version-2").click();
-    const local3 = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = () => resolve(q.result.map((p) => ({ confirmed: p.confirmed, hasBlob: !!p.blob, annotated: !!p.annotatedFrom, marks: p.annotations ? p.annotations.length : 0 }))); }; }));
+    const local3 = await page.evaluate(() => new Promise((resolve) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("photos").objectStore("photos").getAll(); q.onsuccess = () => resolve(q.result.filter((p) => p.auditId).map((p) => ({ confirmed: p.confirmed, hasBlob: !!p.blob, annotated: !!p.annotatedFrom, marks: p.annotations ? p.annotations.length : 0 }))); }; }));
     check(local3.length === 3 && local3.every((p) => p.confirmed && !p.hasBlob) && local3.find((p) => p.annotated).marks === 3, "after upload the images leave the phone but the editable marks stay");
 
     console.log("== online: an old photo that left the phone is downloaded so its marks can be edited");
@@ -293,6 +293,40 @@ const control = (c) => fetch(`${MOCK}/__control`, { method: "POST", body: JSON.s
     await waitFor(async () => (await canvas.evaluate((c) => c.width)) > 0, "editor open on the downloaded photo");
     check((await mockState()).log.some((l) => l.entity === "photo_download"), "the original was downloaded from storage to edit it");
     await page.getByTestId("cancel-annotation").click();
+
+    console.log("== issues: raised and photographed with NO connection, kept across a reload, synced afterwards");
+    await control({ resetIssues: true });
+    await page.getByRole("button", { name: "Projects", exact: true }).click();
+    await page.getByTestId("open-project").click();
+    const room = page.locator('[data-room="Kitchen"]');
+    await room.getByTestId("add-issue").waitFor();
+    await context.setOffline(true);
+    await room.getByTestId("add-issue").click();
+    const sheetI = page.getByTestId("add-issue-sheet");
+    await sheetI.getByTestId("cat-service").click();
+    await sheetI.getByTestId("kind-damaged_part").click();
+    await sheetI.getByTestId("issue-title-input").fill("Drawer front cracked");
+    check(await sheetI.getByTestId("issue-save").isDisabled(), "offline: a Damaged part cannot be saved without a photo");
+    await sheetI.getByTestId("issue-photo-pick").setInputFiles(ICON);
+    await sheetI.getByTestId("issue-save").click();
+    await sheetI.waitFor({ state: "detached" });
+    const card = room.getByTestId("issue-card").filter({ hasText: "Drawer front cracked" });
+    check((await card.getByTestId("issue-pending").count()) === 1, "offline: the issue is saved on the phone and shows waiting to sync");
+    await page.reload();
+    await page.getByTestId("project-card").waitFor();
+    await page.getByTestId("open-project").click();
+    await page.locator('[data-room="Kitchen"]').getByTestId("issue-card").filter({ hasText: "Drawer front cracked" }).waitFor();
+    check((await page.locator('[data-room="Kitchen"]').getByTestId("issue-card").filter({ hasText: "Drawer front cracked" }).getByTestId("photo-thumb").count()) === 1, "offline: the issue and its photo are still there after a reload");
+    const before = (await mockState()).log.filter((l) => l.entity === "room_issue").length;
+    check(before === 0, "offline: nothing reached the server while offline");
+    await context.setOffline(false);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await waitFor(async () => (await mockState()).log.some((l) => l.entity === "room_issue" && l.action === "create" && l.outcome === "applied") && (await mockState()).log.some((l) => l.entity === "issue_photo_confirm"), "issue and photo synced", 30000);
+    await waitFor(async () => (await page.locator('[data-room="Kitchen"]').getByTestId("issue-card").filter({ hasText: "Drawer front cracked" }).getByTestId("issue-pending").count()) === 0, "pending marker cleared", 20000);
+    check(true, "back online: the issue was created first, then its photo was registered, uploaded and confirmed");
+    await page.getByRole("button", { name: "Sync queue" }).click();
+    const qtext = (await page.getByTestId("queue-row").allInnerTexts()).join(" | ");
+    check(/Issue/.test(qtext) && /synced/.test(qtext), "the Sync queue lists the issue and its photo as synced");
     console.log(`\nE2E PASSED: ${results.length} checks`);
   } finally {
     if (browser) await browser.close();

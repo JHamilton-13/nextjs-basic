@@ -2,11 +2,7 @@ import { useState } from "react";
 import { evaluate, formatLength, parseLength, type ReadinessState, type ToleranceSource } from "@phc/domain";
 import type { AppCtx } from "../App";
 import { auditReadiness, groupedItems, latestAudit, recordCheck, recordMeasurement, reviseAudit, submitAudit, type CheckResult } from "../lib/audits";
-import { browserCompress } from "../lib/imaging";
-import { addPhoto, photoSourceBlob } from "../lib/photos";
-import { supabase } from "../lib/supabase";
-import type { Shape } from "../lib/annotations";
-import { AnnotateModal } from "./AnnotateModal";
+import { PhotoStrip } from "./PhotoStrip";
 import { fmtWhen } from "./when";
 import type { LocalItem, LocalPhoto } from "../lib/types";
 import { useLive } from "./useLive";
@@ -67,7 +63,7 @@ export function AuditView({ ctx, auditId }: { ctx: AppCtx; auditId: string }) {
 
       <section className="card">
         <h2>Room photos</h2>
-        <PhotoStrip ctx={ctx} auditId={auditId} itemKey={null} photos={photosFor(null)} disabled={!isLatest} />
+        <PhotoStrip ctx={ctx} scope={{ kind: "audit", auditId, itemKey: null }} photos={photosFor(null)} disabled={!isLatest} />
       </section>
 
       {groups.map((g, idx) => (
@@ -82,56 +78,6 @@ export function AuditView({ ctx, auditId }: { ctx: AppCtx; auditId: string }) {
   );
 }
 
-function PhotoStrip({ ctx, auditId, itemKey, photos, disabled }: { ctx: AppCtx; auditId: string; itemKey: string | null; photos: LocalPhoto[]; disabled: boolean }) {
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState<{ original: LocalPhoto; source: Blob; initial: Shape[] } | null>(null);
-  async function onFile(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    setBusy(true); setError(null);
-    for (const f of Array.from(files)) {
-      const r = await addPhoto({ ...mkCtx(ctx), compress: browserCompress }, { auditId, itemKey, file: f });
-      if (!r.ok) { setError(r.error.message); break; }
-    }
-    setBusy(false);
-    void ctx.sync();
-  }
-  /** Marks always start from the ORIGINAL image. If it was cleaned up after upload, download it when online. */
-  async function openEditor(p: LocalPhoto) {
-    setError(null);
-    const original = p.annotatedFrom ? photos.find((x) => x.id === p.annotatedFrom) ?? (await ctx.db.get("photos", p.annotatedFrom)) : p;
-    if (!original) { setError("The original photo is not on this device."); return; }
-    let source = photoSourceBlob(original);
-    if (!source && supabase && navigator.onLine) {
-      const { data } = await supabase.storage.from("audit-photos").download(original.storagePath);
-      if (data) source = data;
-    }
-    if (!source) { setError("This photo is no longer stored on the device. Connect to the internet to mark it up."); return; }
-    setEditing({ original, source, initial: p.annotatedFrom ? p.annotations ?? [] : [] });
-  }
-  return (
-    <div className="photos">
-      <div className="thumbs">
-        {photos.map((p) => (
-          <figure key={p.id} data-testid="photo-thumb" data-annotated={p.annotatedFrom ? "yes" : "no"}>
-            <img src={p.thumb} alt={p.annotatedFrom ? "Marked-up site photo" : "Site photo"} width={64} height={64} />
-            <figcaption className={p.confirmed ? "ok" : "wait"} data-testid="photo-status">{p.confirmed ? "Uploaded" : "On this device"}</figcaption>
-            {p.annotatedFrom && <figcaption className="muted" data-testid="photo-kind">Marked up</figcaption>}
-            {!disabled && <button className="small" onClick={() => void openEditor(p)} data-testid={p.annotatedFrom ? "edit-marks" : "annotate-btn"}>{p.annotatedFrom ? "Edit marks" : "Mark up"}</button>}
-          </figure>
-        ))}
-      </div>
-      {!disabled && (
-        <label className="filebtn">
-          {busy ? "Saving photo…" : "Add photo"}
-          <input type="file" accept="image/*" capture="environment" multiple hidden data-testid={`photo-input-${itemKey ?? "room"}`} onChange={(e) => { void onFile(e.target.files); e.target.value = ""; }} />
-        </label>
-      )}
-      {error && <p className="chip bad" role="alert">{error}</p>}
-      {editing && <AnnotateModal ctx={ctx} source={editing.source} original={editing.original} initial={editing.initial} onClose={() => setEditing(null)} />}
-    </div>
-  );
-}
 
 function hints(item: LocalItem, have: number): string[] {
   const out: string[] = [];
@@ -154,7 +100,7 @@ function ItemCard({ ctx, item, photos, locked, photosDisabled }: { ctx: AppCtx; 
       {item.issueAt && <p className="issue small" data-testid={`issue-${item.itemKey}`}>Issue raised by {item.issueBy || "unknown"} · {fmtWhen(item.issueAt)}</p>}
       {!locked && hints(item, photos.filter((p) => !p.annotatedFrom).length).map((h) => <p key={h} className="hint">{h}</p>)}
       {item.kind === "tolerance" ? <MeasurementForm ctx={ctx} item={item} locked={locked} /> : <CheckForm ctx={ctx} item={item} locked={locked} />}
-      <PhotoStrip ctx={ctx} auditId={item.auditId} itemKey={item.itemKey} photos={photos} disabled={photosDisabled} />
+      <PhotoStrip ctx={ctx} scope={{ kind: "audit", auditId: item.auditId, itemKey: item.itemKey }} photos={photos} disabled={photosDisabled} />
     </div>
   );
 }

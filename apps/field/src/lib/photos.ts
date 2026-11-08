@@ -110,6 +110,106 @@ export async function addAnnotatedPhoto(
   return ok(photo);
 }
 
+// ------------------------------------------------------------------------------------------------------------------
+// photos on issues (same compression, size limit and register -> upload -> confirm steps as audit photos)
+// ------------------------------------------------------------------------------------------------------------------
+
+export interface IssueCtx { db: Db; userId: string; userLabel: string; compress: Compressor; newId: () => string; now: () => string; notify: () => void }
+
+/** Minimal shape of the transaction these helpers write to (so they work inside a transaction that also touches other stores). */
+interface PhotoTx { objectStore(name: "photos" | "outbox"): { add(v: any): Promise<unknown> } }
+
+/**
+ * Stores one issue photo and queues its register (data lane), upload and confirm (files lane, each waiting for the step before).
+ * The queue group is the issue's room, so the issue's own operations and its photos stay in order. Returns the writes to await.
+ */
+export function queueIssuePhoto(ctx: { newId: () => string; userId: string }, tx: PhotoTx, photo: LocalPhoto, roomId: string): Promise<unknown>[] {
+  const base = { entity: "photo", entityId: photo.id, baseVersion: 0, createdAt: photo.capturedAt, actor: ctx.userId };
+  const common = { projectId: photo.projectId, issueId: photo.issueId, storagePath: photo.storagePath, sha256: photo.sha256, bytes: photo.bytes, capturedAt: photo.capturedAt };
+  const reg: OperationEnvelope = { ...base, opId: ctx.newId(), payload: { action: "register", ...common, ...(photo.annotatedFrom ? { annotatedFrom: photo.annotatedFrom, annotations: photo.annotations } : {}) } };
+  const up: OperationEnvelope = { ...base, opId: ctx.newId(), payload: { action: "upload", ...common, mime: photo.mime } };
+  const conf: OperationEnvelope = { ...base, opId: ctx.newId(), payload: { action: "confirm", ...common } };
+  return [
+    tx.objectStore("photos").add(photo),
+    tx.objectStore("outbox").add(newOutboxRecord(reg, roomId)),
+    tx.objectStore("outbox").add(newOutboxRecord(up, roomId, { lane: "files", after: [reg.opId] })),
+    tx.objectStore("outbox").add(newOutboxRecord(conf, roomId, { lane: "files", after: [up.opId] })),
+  ];
+}
+
+export type IssuePhotoError = { code: "issue_not_found" | "issue_void" | "compress_failed" | "file_too_large" | "photo_not_found" | "cannot_annotate_a_copy" | "invalid_annotations"; message: string };
+
+/** Adds a photo to an existing issue (works offline). */
+export async function addIssuePhoto(ctx: IssueCtx, input: { issueId: string; file: Blob }): Promise<Result<LocalPhoto, IssuePhotoError>> {
+  const { db } = ctx;
+  const issue = await db.get("issues", input.issueId);
+  if (!issue) return err({ code: "issue_not_found", message: "That issue is not on this phone." });
+  if (issue.voidedAt) return err({ code: "issue_void", message: "This issue was voided." });
+  let c;
+  try { c = await ctx.compress(input.file); } catch (e) { return err({ code: "compress_failed", message: `Could not process the photo: ${e instanceof Error ? e.message : String(e)}` }); }
+  if (c.blob.size === 0) return err({ code: "compress_failed", message: "The photo came out empty. Please retake it." });
+  if (c.blob.size > MAX_UPLOAD_BYTES) return err({ code: "file_too_large", message: "The photo is too large to upload (over 10 MB)." });
+  const id = ctx.newId();
+  const photo: LocalPhoto = {
+    id, auditId: "", issueId: issue.id, version: 0, projectId: issue.projectId, itemKey: null, blob: c.blob, originalBlob: c.original, thumb: c.thumb, mime: c.mime,
+    bytes: c.blob.size, sha256: hex(await crypto.subtle.digest("SHA-256", await c.blob.arrayBuffer())), capturedAt: ctx.now(), capturedBy: ctx.userId,
+    storagePath: `${issue.projectId}/issues/${issue.id}/${id}.jpg`, confirmed: false,
+  };
+  const tx = db.transaction(["photos", "outbox"], "readwrite");
+  await Promise.all(queueIssuePhoto(ctx, tx, photo, issue.roomId));
+  await tx.done;
+  ctx.notify();
+  return ok(photo);
+}
+
+/** Saves a marked-up COPY of an issue photo (flattened image + editable marks). The original is never modified. */
+export async function addAnnotatedIssuePhoto(
+  ctx: IssueCtx, input: { originalId: string; shapes: Shape[]; flattened: { blob: Blob; thumb: string; mime: string } },
+): Promise<Result<LocalPhoto, IssuePhotoError>> {
+  const { db } = ctx;
+  const original = await db.get("photos", input.originalId);
+  if (!original || !original.issueId) return err({ code: "photo_not_found", message: "That photo is not on this phone." });
+  if (original.annotatedFrom) return err({ code: "cannot_annotate_a_copy", message: "Annotate the original photo; each save creates a new annotated copy." });
+  const v = validateShapes(input.shapes);
+  if (!v.ok) return err({ code: "invalid_annotations", message: v.error.message });
+  const issue = await db.get("issues", original.issueId);
+  if (!issue) return err({ code: "issue_not_found", message: "That issue is not on this phone." });
+  if (issue.voidedAt) return err({ code: "issue_void", message: "This issue was voided." });
+  const blob = input.flattened.blob;
+  if (blob.size === 0) return err({ code: "compress_failed", message: "The annotated image came out empty." });
+  if (blob.size > MAX_UPLOAD_BYTES) return err({ code: "file_too_large", message: "The annotated photo is too large to upload (over 10 MB)." });
+  const id = ctx.newId();
+  const photo: LocalPhoto = {
+    id, auditId: "", issueId: issue.id, version: 0, projectId: issue.projectId, itemKey: null, blob, thumb: input.flattened.thumb, mime: input.flattened.mime,
+    bytes: blob.size, sha256: hex(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer())), capturedAt: ctx.now(), capturedBy: ctx.userId,
+    storagePath: `${issue.projectId}/issues/${issue.id}/${id}.jpg`, confirmed: false, annotatedFrom: original.id, annotations: v.value,
+  };
+  const tx = db.transaction(["photos", "outbox"], "readwrite");
+  await Promise.all(queueIssuePhoto(ctx, tx, photo, issue.roomId));
+  await tx.done;
+  ctx.notify();
+  return ok(photo);
+}
+
+/**
+ * Photos taken by other people are not on this phone. When one is on screen and the phone is online, download it once, keep only a
+ * small preview, and cache that. Returns the preview, or null (a plain tile is shown) when it cannot be fetched.
+ */
+export async function ensureRemoteThumb(
+  deps: { db: Db; download: (storagePath: string) => Promise<Blob | null>; makeThumb: (b: Blob) => Promise<string> }, photoId: string,
+): Promise<string | null> {
+  const p = await deps.db.get("photos", photoId);
+  if (!p) return null;
+  if (p.thumb) return p.thumb;
+  try {
+    const blob = await deps.download(p.storagePath);
+    if (!blob || blob.size === 0) return null;
+    const thumb = await deps.makeThumb(blob);
+    await deps.db.put("photos", { ...p, thumb });
+    return thumb;
+  } catch { return null; }
+}
+
 /**
  * Once the server confirmed a photo AND its audit version is submitted (so it will not be edited or annotated here again),
  * drop the heavy blobs and keep the preview. Returns how many photos were finalized.
@@ -120,7 +220,8 @@ export async function finalizeConfirmedPhotos(db: Db, outbox: Outbox): Promise<n
   for (const id of confirmed) {
     const p = await db.get("photos", id);
     if (p && !p.confirmed) {
-      if (!(await db.get("audits", `${p.auditId}:${p.version}`))?.submittedAt) continue; // still being worked on: keep the images
+      // an audit photo waits for its version to be submitted; an issue photo has no submit step, so it is finalized once the server has it
+      if (!p.issueId && !(await db.get("audits", `${p.auditId}:${p.version}`))?.submittedAt) continue; // still being worked on: keep the images
       const { blob: _b, originalBlob: _o, ...rest } = p;
       await db.put("photos", { ...rest, confirmed: true });
       n++;

@@ -3,8 +3,9 @@ import { ROOM_CHECK_ITEMS } from "../lib/roomChecks";
 import { useLive } from "./useLive";
 import { fmtBytes, readStorage, storageWarning } from "../lib/storage";
 
-const WHAT = (e: string) => (e === "audit" ? "Create audit" : e === "audit_item" ? "Save measurement" : e === "room_check" ? "Room checklist" : e);
-const WHICH = (op: { entity: string; entityId: string }) => { const k = op.entityId.split(":").slice(-1)[0]!; return op.entity === "room_check" ? (ROOM_CHECK_ITEMS.find((i) => i.key === k)?.label ?? k) : k; };
+const WHAT = (e: string) => (e === "audit" ? "Create audit" : e === "audit_item" ? "Save measurement" : e === "room_check" ? "Room checklist" : e === "room_issue" ? "Issue" : e === "photo" ? "Photo" : e);
+const ACTION: Record<string, string> = { create: "raised", update: "edited", complete: "completed", reopen: "reopened", void: "voided", register: "registered", upload: "uploading", confirm: "confirming" };
+const WHICH = (op: { entity: string; entityId: string; payload: Record<string, unknown> }) => { const k = op.entityId.split(":").slice(-1)[0]!; if (op.entity === "room_check") return ROOM_CHECK_ITEMS.find((i) => i.key === k)?.label ?? k; if (op.entity === "room_issue" || (op.entity === "photo" && op.payload.issueId)) return ACTION[String(op.payload.action)] ?? String(op.payload.action ?? ""); return k; };
 
 export function Queue({ ctx }: { ctx: AppCtx }) {
   const rows = useLive(ctx.tick, () => ctx.outbox.list());

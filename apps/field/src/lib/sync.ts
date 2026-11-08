@@ -3,20 +3,23 @@ import type { Db } from "./db";
 import { replaceCache } from "./db";
 import { reconcileFromServer, type ServerItemRow } from "./audits";
 import { finalizeConfirmedPhotos } from "./photos";
+import { reconcileIssues, type ServerIssueRow } from "./issues";
+import { getIdentity } from "./db";
 import type { DrainSummary, Outbox } from "./outbox";
 import { reconcileRoomChecks, type ServerCheckRow } from "./roomChecks";
-import type { ProjectRow, RoomRow, TemplateRow } from "./types";
+import type { LocalPhoto, ProjectRow, RoomRow, TemplateRow, TradeRow } from "./types";
 
 /** Downloads what this user may see (RLS decides) into IndexedDB so the app works offline. */
 export async function pullCache(sb: SupabaseClient, db: Db): Promise<void> {
-  const [p, r, t] = await Promise.all([
+  const [p, r, t, tr] = await Promise.all([
     sb.from("projects").select("id,name,customer,address").is("archived_at", null),
     sb.from("rooms").select("id,project_id,name,floor,details,details_source"),
     sb.from("audit_templates").select("id,name,version,config").eq("active", true),
+    sb.from("trades").select("id,name,sort_order,active").order("sort_order"),
   ]);
-  const failed = p.error ?? r.error ?? t.error;
+  const failed = p.error ?? r.error ?? t.error ?? tr.error;
   if (failed) throw new Error(failed.message);
-  await replaceCache(db, { projects: (p.data ?? []) as ProjectRow[], rooms: (r.data ?? []) as RoomRow[], templates: (t.data ?? []) as TemplateRow[] });
+  await replaceCache(db, { projects: (p.data ?? []) as ProjectRow[], rooms: (r.data ?? []) as RoomRow[], templates: (t.data ?? []) as TemplateRow[], trades: (tr.data ?? []) as TradeRow[] });
 }
 
 /** Label for an embedded profile row: name, else email. */
@@ -60,8 +63,56 @@ export async function pullRoomChecks(sb: SupabaseClient, db: Db, outbox: Outbox)
   if (res.error) throw new Error(res.error.message);
   const rows = (res.data ?? []) as unknown as (Omit<ServerCheckRow, "by_label"> & { by: unknown })[];
   for (const room of rooms) {
-    if (queue.some((q) => q.auditId === room.id && q.state.status !== "confirmed")) continue; // still has unsynced ticks: keep local state
+    if (queue.some((q) => q.auditId === room.id && q.op.entity === "room_check" && q.state.status !== "confirmed")) continue; // still has unsynced ticks: keep local state
     await reconcileRoomChecks(db, room.id, rows.filter((r) => r.room_id === room.id).map((r) => ({ ...r, by_label: labelOf(r.by) })));
+  }
+}
+
+/** My own role on each project (and whether I am an admin), so the app can hide buttons I may not use. The database enforces the same rules. */
+export async function pullRoles(sb: SupabaseClient, db: Db): Promise<void> {
+  const me = await getIdentity(db);
+  if (!me) return;
+  const [prof, members] = await Promise.all([
+    sb.from("profiles").select("is_admin").eq("id", me.userId).maybeSingle(),
+    sb.from("project_members").select("project_id,role").eq("user_id", me.userId),
+  ]);
+  if (prof.error ?? members.error) throw new Error((prof.error ?? members.error)!.message);
+  const byProject: Record<string, string> = {};
+  for (const m of (members.data ?? []) as { project_id: string; role: string }[]) byProject[m.project_id] = m.role;
+  await db.put("meta", { isAdmin: !!(prof.data as { is_admin?: boolean } | null)?.is_admin, byProject }, "roles");
+}
+
+/** Issues, with who raised / completed / voided them. Issues that still have queued changes on this phone are not overwritten. */
+export async function pullIssues(sb: SupabaseClient, db: Db, outbox: Outbox): Promise<void> {
+  const sel = "id,project_id,room_id,kind,trade_id,title,description,row_version,raised_by,raised_at,completed_by,completed_at,completed_note,voided_by,voided_at,void_note,"
+    + "raised_p:profiles!room_issues_raised_by_fkey(full_name,email),completed_p:profiles!room_issues_completed_by_fkey(full_name,email),voided_p:profiles!room_issues_voided_by_fkey(full_name,email)";
+  const res = await sb.from("room_issues").select(sel);
+  if (res.error) throw new Error(res.error.message);
+  const queue = await outbox.list();
+  const pendingIds = new Set(queue.filter((q) => q.op.entity === "room_issue" && q.state.status !== "confirmed").map((q) => q.op.entityId));
+  const rows: ServerIssueRow[] = ((res.data ?? []) as unknown as Record<string, unknown>[]).map((r) => ({
+    id: String(r.id), project_id: String(r.project_id), room_id: String(r.room_id), kind: r.kind as ServerIssueRow["kind"], trade_id: (r.trade_id as string | null) ?? null,
+    title: String(r.title), description: (r.description as string | null) ?? null, row_version: Number(r.row_version),
+    raised_by: String(r.raised_by), raised_by_label: labelOf(r.raised_p), raised_at: String(r.raised_at),
+    completed_by: (r.completed_by as string | null) ?? null, completed_by_label: labelOf(r.completed_p), completed_at: (r.completed_at as string | null) ?? null, completed_note: (r.completed_note as string | null) ?? null,
+    voided_by: (r.voided_by as string | null) ?? null, voided_by_label: labelOf(r.voided_p), voided_at: (r.voided_at as string | null) ?? null, void_note: (r.void_note as string | null) ?? null,
+  }));
+  await reconcileIssues(db, rows, pendingIds);
+}
+
+/** Photo rows for issues. Photos taken on another phone are added as previews-to-fetch (the image itself is downloaded on demand). */
+export async function pullIssuePhotos(sb: SupabaseClient, db: Db): Promise<void> {
+  const res = await sb.from("issue_photos").select("id,issue_id,project_id,storage_path,bytes,checksum_sha256,captured_by,captured_at,confirmed_at,annotated_from,annotations");
+  if (res.error) throw new Error(res.error.message);
+  for (const r of (res.data ?? []) as Record<string, unknown>[]) {
+    const id = String(r.id);
+    if (await db.get("photos", id)) continue;
+    const stub: LocalPhoto = {
+      id, auditId: "", issueId: String(r.issue_id), version: 0, projectId: String(r.project_id), itemKey: null, thumb: "", mime: "image/jpeg", bytes: Number(r.bytes),
+      sha256: String(r.checksum_sha256), capturedAt: String(r.captured_at), capturedBy: String(r.captured_by), storagePath: String(r.storage_path), confirmed: !!r.confirmed_at,
+      ...(r.annotated_from ? { annotatedFrom: String(r.annotated_from), annotations: r.annotations as LocalPhoto["annotations"] } : {}),
+    };
+    await db.put("photos", stub);
   }
 }
 
@@ -93,6 +144,9 @@ export async function syncNow(deps: { sb: SupabaseClient; db: Db; outbox: Outbox
     await pullAuditStates(sb, db, outbox);
     await pullCache(sb, db);
     await pullRoomChecks(sb, db, outbox);
+    await pullRoles(sb, db);
+    await pullIssues(sb, db, outbox);
+    await pullIssuePhotos(sb, db);
     return { ...sum, pulled: true };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);

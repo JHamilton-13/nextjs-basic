@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { AppCtx } from "../App";
 import { drawShapes, ERASER_RADIUS, hitsShape, PALETTE, simplifyPoints, type Pt, type Shape } from "../lib/annotations";
 import { flattenAnnotated } from "../lib/imaging";
-import { addAnnotatedPhoto } from "../lib/photos";
+import { addAnnotatedIssuePhoto, addAnnotatedPhoto } from "../lib/photos";
 import type { LocalPhoto } from "../lib/types";
 
 type Tool = "pen" | "highlight" | "text" | "erase";
@@ -116,10 +116,10 @@ export function AnnotateModal({ ctx, source, original, initial, onClose }: { ctx
     setSaving(true); setError(null);
     try {
       const flattened = await flattenAnnotated(source, shapes);
-      const r = await addAnnotatedPhoto(
-        { db: ctx.db, outbox: ctx.outbox, userId: ctx.identity.userId, userLabel: ctx.identity.label, newId: () => crypto.randomUUID(), now: () => new Date().toISOString() },
-        { originalId: original.id, shapes, flattened },
-      );
+      const base = { db: ctx.db, userId: ctx.identity.userId, userLabel: ctx.identity.label, newId: () => crypto.randomUUID(), now: () => new Date().toISOString() };
+      const r = original.issueId
+        ? await addAnnotatedIssuePhoto({ ...base, compress: async (f) => ({ blob: f, thumb: "", mime: "image/jpeg", original: f }), notify: () => ctx.outbox.notify() }, { originalId: original.id, shapes, flattened })
+        : await addAnnotatedPhoto({ ...base, outbox: ctx.outbox }, { originalId: original.id, shapes, flattened });
       if (!r.ok) { setError(r.error.message); setSaving(false); return; }
       void ctx.sync();
       onClose();
