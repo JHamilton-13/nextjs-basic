@@ -68,6 +68,9 @@ Last updated: 2026-11-08
 ## Step 11: manager screens, report build and send (built and tested; migration 1700 APPLIED 2026-11-08)
 Reports screen in `apps/field` (managers only), server function `api/reports.mjs`, migration 1700 applied to the live database after owner approval (verified: RLS on, one select policy, two storage policies, private PDF-only 18 MB bucket, four functions not callable by anon, authenticated has SELECT only on `reports`). Owner actions: Vercel settings (`REPORT_FROM`, `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET`, `GMAIL_REFRESH_TOKEN`, optional `REPORT_TIMEZONE`), see `docs/ops/gmail-send-setup.md`. See `docs/testing/step11-manager-reports-results.md`.
 
+## Step 12: reports trial on the real phone and database (script written; awaiting the owner's run)
+`docs/testing/reports-trial.md`. Parts A, B and D need only the preview; part C needs the Vercel email settings (`docs/ops/gmail-send-setup.md`) and the owner's separate yes for the one real test email to the owner's own mailbox.
+
 ## Technical debt / notes
 - Decimal-inch and mm inputs round to nearest 1/64"; fraction denominators limited to 2..64 (powers of two).
 - Concurrency tested for `apply_op` only; no load testing; no tests of `service_role` paths.
