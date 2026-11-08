@@ -12,8 +12,8 @@ export default defineConfig({
         name: "PHC Field Audit",
         short_name: "Field Audit",
         description: "Pre-install site audit for installers. Works offline.",
-        theme_color: "#23272e",
-        background_color: "#23272e",
+        theme_color: "#0c0c0c",
+        background_color: "#0c0c0c",
         display: "standalone",
         start_url: "/",
         icons: [
