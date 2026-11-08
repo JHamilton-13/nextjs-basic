@@ -1,7 +1,7 @@
 # Add Issue screens: design spec
 
 Date: 2026-11-08
-Status: DRAFT for owner review (nothing built yet)
+Status: APPROVED by owner 2026-11-08 (go with recommendations; amendment: one Open / Completed toggle, no separate Show voided)
 Parent: `docs/superpowers/specs/2026-11-08-issue-categories-and-reports-design.md` (this adds the installer screens it leaves out) and `docs/HANDOFF.md`.
 Database: migrations 1400 (issues, issue photos) and 1600 (trades, void, rules) are applied.
 
@@ -15,8 +15,8 @@ the builder PDF from the Pre-Install Corrections. Part requests are out of scope
 - Three categories, chosen first: **Pre-Install Corrections** (kind Pre Install Correction, trade required), **Service** (Punch Item, Missing part, Damaged part), **Touch-ups** (Touch Up).
 - Fields: kind (inside its category), title, description, photos; plus **Trade** for Pre-Install Corrections. No Assigned To, Priority or Due date.
 - Complete, reopen, edit and void: by the **installer who raised the issue or any manager** (admin, production, project, installation manager). Other installers can see an issue but not change it.
-- **Void** exists. Voided issues are kept and hidden by default.
-- Counts per kind and a **Show completed** toggle, as in Cockpit.
+- **Void** exists. Voided issues are kept in the database and history and are **not shown in the app** (no toggle; a way to view them can be added if wanted).
+- Counts per kind and a single **Open / Completed** toggle (owner amendment 2026-11-08, replaces Show completed and the proposed Show voided).
 - **Damaged part needs at least one photo** to save (the form) and to complete (the database, `photo_required`). Missing part does not.
 - Installers see issues raised by other installers on the same room.
 - Photos: 2048 px, quality 0.8; pen, highlighter, text, eraser; markup saves a new copy and the original is never changed. Reuse the existing photo and markup code.
@@ -26,7 +26,7 @@ the builder PDF from the Pre-Install Corrections. Part requests are out of scope
 
 **Room card (existing `RoomCard`).** A new **Add issue** button and an **Issues** section under the checklist.
 
-**Issues section.** Three headings (Pre-Install Corrections, Service, Touch-ups). Counts per kind are shown as chips (five: Pre-Install, Punch, Missing, Damaged, Touch-up), each counting open issues in this room. Toggles: **Show completed** and **Show voided** (both off by default). Each issue card shows: kind badge, trade badge (Pre-Install only), title, description, photo thumbnails, "Raised by <name> · <date and time>" (and "Completed by ..." / "Voided by ...") and a "waiting to sync" or "needs attention" marker.
+**Issues section.** Three headings (Pre-Install Corrections, Service, Touch-ups). Counts per kind are shown as chips (five: Pre-Install, Punch, Missing, Damaged, Touch-up), each counting open issues in this room. One two-way toggle, **Open | Completed** (Open is the default); voided issues never appear in either view. Each issue card shows: kind badge, trade badge (Pre-Install only), title, description, photo thumbnails, "Raised by <name> · <date and time>" (and "Completed by ..." / "Voided by ...") and a "waiting to sync" or "needs attention" marker.
 
 **Add Issue form (full-screen sheet).**
 1. Category: three large buttons.
@@ -71,9 +71,4 @@ Part requests, report building and sending, the manager screens (builder contact
 
 ## 8. Open points for your review
 
-1. **Counts:** five chips per room (one per kind) as decided. Cockpit shows three; say if you prefer three category chips with the kind counts inside.
-2. **Show voided:** a separate toggle from Show completed. OK?
-3. **Other people's photos** load on demand when online and are otherwise a plain tile. OK, or should every photo be downloaded on sync (uses much more data)?
-4. **Edit and reopen** follow the raiser-or-manager rule you set for complete and void.
-5. **Trade list editing** (managers) is built later with the manager screens; until then trades are changed in the database.
-6. **Role on the phone:** the app asks for your own project role during sync to hide buttons you may not use. OK?
+All approved 2026-11-08 with my recommendations: 1. five per-kind count chips; 2. ONE Open | Completed toggle, voided issues not shown in the app (amended by the owner); 3. other installers' photos load on demand when online, otherwise a plain tile; 4. edit and reopen follow the raiser-or-manager rule; 5. trade list editing by managers comes later with the manager screens (trades are changed in the database until then); 6. the app fetches your own project role during sync to hide buttons you may not use.
