@@ -37,6 +37,17 @@ Not covered here: 1, 2, 6-9, 11, 15, 17 (need the PWA, Drive, PDFs, signatures).
 - Supabase-specific behaviour (Auth hook wiring, real storage.objects policies, PostgREST/column-grant behaviour) is only verified on stand-ins until applied to the real project.
 - No test for `service_role` paths. No load/performance test.
 
+## Live sign-in verification (2026-11-08)
+Owner enabled the Before User Created hook, Google + Email providers and disabled anonymous sign-ins in the dashboard, invited their email,
+signed in once by email code; `is_admin` was then set on that single profile (audit-logged). Tests against the live Auth API (public key, undeliverable addresses):
+- Uninvited password sign-up: HTTP 403 "This account has not been invited."
+- Uninvited email-code sign-up (`create_user: true`): HTTP 403, same message.
+- Anonymous sign-in: HTTP 422 `anonymous_provider_disabled`.
+- Auth users afterwards: 1 (the owner); anonymous users: 0; profiles: 1.
+- As the owner (simulated JWT subject, rolled back): `is_active`, `is_admin`, `can_manage_invites` all true; sees their invite and the audit log.
+Not yet tested: Google sign-in (needs the PWA), invited second user, revoking an invite on a live account.
+Environment note: the session's default network policy blocked `*.supabase.co`; a personal environment `nextjs-basic` allowing only `zuyzxkkmsyuybbznelql.supabase.co` was created with the owner's approval.
+
 ## Applied to the real project (2026-11-08, after owner approval)
 Project `zuyzxkkmsyuybbznelql` ("Project Field Tracking", us-east-2, Postgres 17.x) was empty before (0 tables, 0 migrations).
 Applied in order with the Supabase `apply_migration` tool, each returning success: types_and_helpers, identity_and_invites,

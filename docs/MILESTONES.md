@@ -8,9 +8,9 @@ Last updated: 2026-11-08
 - **Step 2 — database (approved and APPLIED to Supabase project `zuyzxkkmsyuybbznelql` on 2026-11-08).** 9 migrations in `supabase/migrations/`, example seed in `supabase/seed.sql` (NOT applied), tests in `supabase/tests/`: 235 assertions + 2 real-concurrency checks on local Postgres 16; remote structure, advisors and function behaviour verified read-only. No data has been written to the real project. See `docs/DATABASE_SCHEMA.md` and `docs/testing/step2-database-results.md`.
 
 ## In progress
-- Owner dashboard setup (below), then first-admin bootstrap. Step 3 (PWA scaffold) starts after owner approval.
+- Step 3 (installer PWA scaffold + thin vertical slice) started 2026-11-08. Sign-in gate, first invite and first admin are DONE and verified live (see `docs/testing/step2-database-results.md`).
 
-## Owner actions needed in the Supabase dashboard (I cannot do these)
+## Owner dashboard setup (DONE 2026-11-08: hook enabled, Google + Email on, anonymous off). Original checklist:
 1. Authentication > Hooks: enable **Before User Created** -> `public.hook_before_user_created`. UNTIL THIS IS ON, anyone can create an auth account if a sign-in provider is enabled (they still see no data, because RLS requires an active invite, but do not leave it off).
 2. Authentication > Providers: enable Google (create the OAuth client in Google Cloud; secrets go in Supabase only) and Email OTP; turn OFF anonymous sign-ins.
 3. Tell me the exact Google email you will sign in with so I can create your invite and, after your first sign-in, set `is_admin`.
