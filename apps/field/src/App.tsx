@@ -34,7 +34,7 @@ export function App() {
 
   const outbox = useMemo(() => {
     if (!db) return undefined;
-    return new Outbox(db, supabase ? supabaseTransport(supabase) : { send: async () => { throw new Error("Not configured"); } }, {
+    return new Outbox(db, supabase ? supabaseTransport(supabase, db) : { send: async () => { throw new Error("Not configured"); } }, {
       canSend: (actor) => actor === identityRef.current?.userId, onChange: () => setTick((t) => t + 1),
     });
   }, [db]);

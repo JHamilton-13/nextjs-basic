@@ -29,3 +29,15 @@ button.row, .row { display: flex; width: 100%; justify-content: space-between; a
 .divider { text-align: center; color: var(--gray); margin: 1rem 0 .25rem; }
 .signin { max-width: 420px; }
 details { margin: 1rem 0; } summary { cursor: pointer; min-height: 44px; display: flex; align-items: center; }
+.item { border-top: 1px solid var(--line); padding: .75rem 0; }
+.item:first-of-type { border-top: 0; }
+.hint { color: var(--warn); font-size: .9rem; margin: .2rem 0; font-weight: 600; }
+.btnrow { display: flex; gap: .5rem; flex-wrap: wrap; margin: .5rem 0; }
+.btnrow button { flex: 1; min-width: 72px; }
+button.pass { background: var(--good); color: #fff; border-color: var(--good); }
+button.fail { background: var(--bad); color: #fff; border-color: var(--bad); }
+.filebtn { display: inline-flex; align-items: center; min-height: 48px; padding: .5rem 1rem; border: 1px dashed #6b7280; border-radius: 10px; font-weight: 600; cursor: pointer; margin: .4rem 0; background: #fff; }
+.thumbs { display: flex; gap: .5rem; flex-wrap: wrap; } .thumbs figure { margin: 0; text-align: center; font-size: .7rem; }
+.thumbs img { border-radius: 8px; object-fit: cover; border: 1px solid var(--line); } .thumbs .ok { color: var(--good); } .thumbs .wait { color: var(--warn); }
+.small-chip { font-size: .7rem; vertical-align: middle; }
+summary strong { font-size: 1.05rem; }

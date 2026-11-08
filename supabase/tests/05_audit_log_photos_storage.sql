@@ -74,7 +74,7 @@ begin
   perform test.as_anon();
   perform test.raises(format($q$insert into storage.objects (bucket_id, name) values ('audit-photos', %L)$q$, pth), '42501', 'anon cannot upload');
   perform test.as_user(test.u(4));
-  insert into storage.objects (bucket_id, name, owner) values ('audit-photos', pth, test.u(4));
+  insert into storage.objects (bucket_id, name, owner, metadata) values ('audit-photos', pth, test.u(4), '{"size": 2048}');
   perform test.ok(true, 'the capturer can upload to the registered path');
   perform public.confirm_photo(test.u(2100));
   perform public.confirm_photo(test.u(2100));
@@ -93,6 +93,15 @@ begin
   perform test.as_user(test.u(4));
   perform test.raises(format($q$delete from storage.objects where name = %L$q$, pth), '42501', 'uploaded evidence cannot be deleted by users');
   perform test.raises(format($q$update storage.objects set name = 'moved' where name = %L$q$, pth), '42501', 'uploaded evidence cannot be replaced by users');
+
+  -- size check: a stored file whose size differs from the registered size is refused
+  insert into public.photos (id, project_id, audit_id, version, item_key, storage_path, checksum_sha256, bytes, captured_by, captured_at)
+  values (test.u(2102), test.u(101), a, 1, 'wall_length', test.u(101) || '/' || a || '/short.jpg', repeat('e', 64), 999, test.u(4), now());
+  insert into storage.objects (bucket_id, name, owner, metadata) values ('audit-photos', test.u(101) || '/' || a || '/short.jpg', test.u(4), '{"size": 500}');
+  perform test.raises(format($q$select public.confirm_photo(%L)$q$, test.u(2102)), 'size_mismatch', 'a truncated upload (size differs from the registered size) cannot be confirmed');
+  perform test.as_postgres();
+  perform test.ok((select confirmed_at is null from public.photos where id = test.u(2102)), 'the mismatched photo stays unconfirmed');
+  perform test.as_user(test.u(4));
 
   -- late evidence is allowed on a submitted audit (offline photos can sync after submit)
   perform test.submit(90, a, 1);

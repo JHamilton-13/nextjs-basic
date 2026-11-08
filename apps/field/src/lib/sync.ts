@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Db } from "./db";
 import { replaceCache } from "./db";
 import { reconcileFromServer, type ServerItemRow } from "./audits";
+import { finalizeConfirmedPhotos } from "./photos";
 import type { DrainSummary, Outbox } from "./outbox";
 import type { ProjectRow, RoomRow, TemplateRow } from "./types";
 
@@ -31,6 +32,18 @@ export async function pullAuditResults(sb: SupabaseClient, db: Db, outbox: Outbo
   }
 }
 
+/** For audits whose submit reached the server, ask the server for the authoritative readiness. */
+export async function pullAuditStates(sb: SupabaseClient, db: Db, outbox: Outbox): Promise<void> {
+  const queue = await outbox.list();
+  for (const audit of await db.getAll("audits")) {
+    if (!audit.submittedAt) continue;
+    const submitted = queue.some((q) => q.auditId === audit.auditId && q.op.entity === "audit" && q.op.payload.action === "submit" && q.state.status === "confirmed");
+    if (!submitted) continue;
+    const { data, error } = await sb.rpc("audit_state", { p_audit_id: audit.auditId, p_version: 1 });
+    if (!error && typeof data === "string" && data !== audit.serverState) await db.put("audits", { ...audit, serverState: data });
+  }
+}
+
 export interface SyncResult extends DrainSummary { pulled: boolean; error?: string }
 
 export async function syncNow(deps: { sb: SupabaseClient; db: Db; outbox: Outbox }, o: { ignoreBackoff?: boolean } = {}): Promise<SyncResult> {
@@ -39,7 +52,9 @@ export async function syncNow(deps: { sb: SupabaseClient; db: Db; outbox: Outbox
   const sum = await outbox.drain(o);
   if (sum.networkDown) return { ...sum, pulled: false };
   try {
+    await finalizeConfirmedPhotos(db, outbox);
     await pullAuditResults(sb, db, outbox);
+    await pullAuditStates(sb, db, outbox);
     await pullCache(sb, db);
     return { ...sum, pulled: true };
   } catch (e) {

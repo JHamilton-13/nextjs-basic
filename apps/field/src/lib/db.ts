@@ -1,5 +1,5 @@
 import { openDB, type DBSchema, type IDBPDatabase } from "idb";
-import type { Identity, LocalAudit, LocalItem, OutboxRecord, ProjectRow, RoomRow, TemplateRow } from "./types";
+import type { Identity, LocalAudit, LocalItem, LocalPhoto, OutboxRecord, ProjectRow, RoomRow, TemplateRow } from "./types";
 
 interface PhcDB extends DBSchema {
   meta: { key: string; value: unknown };
@@ -8,6 +8,7 @@ interface PhcDB extends DBSchema {
   templates: { key: string; value: TemplateRow };
   audits: { key: string; value: LocalAudit };
   items: { key: string; value: LocalItem; indexes: { by_audit: string } };
+  photos: { key: string; value: LocalPhoto; indexes: { by_audit: string } };
   outbox: { key: number; value: OutboxRecord; indexes: { by_audit: string } };
 }
 
@@ -15,15 +16,18 @@ export type Db = IDBPDatabase<PhcDB>;
 
 /** Durable local store. Every write the user makes lands here (and in `outbox`) before any network call. */
 export function openPhcDb(name = "phc-field"): Promise<Db> {
-  return openDB<PhcDB>(name, 1, {
-    upgrade(db) {
-      db.createObjectStore("meta");
-      db.createObjectStore("projects", { keyPath: "id" });
-      db.createObjectStore("rooms", { keyPath: "id" }).createIndex("by_project", "project_id");
-      db.createObjectStore("templates", { keyPath: "id" });
-      db.createObjectStore("audits", { keyPath: "auditId" });
-      db.createObjectStore("items", { keyPath: "key" }).createIndex("by_audit", "auditId");
-      db.createObjectStore("outbox", { keyPath: "seq", autoIncrement: true }).createIndex("by_audit", "auditId");
+  return openDB<PhcDB>(name, 2, {
+    upgrade(db, oldVersion) {
+      if (oldVersion < 1) {
+        db.createObjectStore("meta");
+        db.createObjectStore("projects", { keyPath: "id" });
+        db.createObjectStore("rooms", { keyPath: "id" }).createIndex("by_project", "project_id");
+        db.createObjectStore("templates", { keyPath: "id" });
+        db.createObjectStore("audits", { keyPath: "auditId" });
+        db.createObjectStore("items", { keyPath: "key" }).createIndex("by_audit", "auditId");
+        db.createObjectStore("outbox", { keyPath: "seq", autoIncrement: true }).createIndex("by_audit", "auditId");
+      }
+      if (oldVersion < 2) db.createObjectStore("photos", { keyPath: "id" }).createIndex("by_audit", "auditId");
     }
   });
 }

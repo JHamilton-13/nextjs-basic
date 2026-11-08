@@ -148,4 +148,73 @@ describe("Outbox", () => {
     expect(max).toBe(1);
     expect(await statuses(ob)).toEqual(["confirmed", "confirmed"]);
   });
+
+  it("lanes: a permanently failed file upload does not block results of the same audit", async () => {
+    const sent: string[] = [];
+    const ob = mk({ send: async (o) => { sent.push(o.opId); if (o.opId === uuid(1)) throw new TransportError("server", "too large", false); return applied; } });
+    await ob.enqueue(op(1, "a1", { entity: "photo" }), "a1", { lane: "files" });
+    await ob.enqueue(op(2, "a1"), "a1");                       // data lane, same audit
+    await ob.enqueue(op(3, "a1", { entity: "photo" }), "a1", { lane: "files" }); // files lane: blocked behind the failed upload
+    await ob.drain();
+    expect(sent).toEqual([uuid(1), uuid(2)]);
+    expect(await statuses(ob)).toEqual(["failed", "confirmed", "pending"]);
+  });
+
+  it("lanes: a conflicted result does not block photo uploads", async () => {
+    const sent: string[] = [];
+    const ob = mk({ send: async (o) => { sent.push(o.opId); return o.opId === uuid(1) ? { status: "conflict", currentVersion: 2, baseVersion: 0 } : applied; } });
+    await ob.enqueue(op(1, "a1"), "a1");
+    await ob.enqueue(op(2, "a1", { entity: "photo" }), "a1", { lane: "files" });
+    await ob.drain();
+    expect(sent).toEqual([uuid(1), uuid(2)]);
+  });
+
+  it("dependencies: an op waits for the ops it depends on, in any lane order", async () => {
+    const sent: string[] = [];
+    let registerFails = true;
+    const ob = mk({ send: async (o) => { sent.push(o.opId); if (o.opId === uuid(1) && registerFails) throw new TransportError("network", "down", true); return applied; } });
+    await ob.enqueue(op(1, "a1", { entity: "photo" }), "a1");                                          // register (data)
+    await ob.enqueue(op(2, "a1", { entity: "photo" }), "a1", { lane: "files", after: [uuid(1)] });   // upload
+    await ob.enqueue(op(3, "a1", { entity: "photo" }), "a1", { lane: "files", after: [uuid(2)] });   // confirm
+    await ob.drain();                    // register fails (network) -> stop
+    expect(sent).toEqual([uuid(1)]);
+    registerFails = false;
+    await ob.drain({ ignoreBackoff: true });
+    expect(sent).toEqual([uuid(1), uuid(1), uuid(2), uuid(3)]);
+    expect(await statuses(ob)).toEqual(["confirmed", "confirmed", "confirmed"]);
+  });
+
+  it("dependencies: if the register op is permanently rejected, the upload is never sent", async () => {
+    const sent: string[] = [];
+    const ob = mk({ send: async (o) => { sent.push(o.opId); return { status: "rejected", message: "no" }; } });
+    await ob.enqueue(op(1, "a1", { entity: "photo" }), "a1");
+    await ob.enqueue(op(2, "a1", { entity: "photo" }), "a1", { lane: "files", after: [uuid(1)] });
+    await ob.drain(); await ob.drain();
+    expect(sent).toEqual([uuid(1)]);
+    expect((await ob.list())[1]?.state.status).toBe("pending");
+  });
+
+  it("lanes: a retryable failure in the files lane pauses uploads but results keep flowing", async () => {
+    const sent: string[] = [];
+    const ob = mk({ send: async (o) => { sent.push(o.opId); if (o.entity === "photo") throw new TransportError("network", "storage unreachable", true); return applied; } });
+    await ob.enqueue(op(1, "a1", { entity: "photo" }), "a1", { lane: "files" });
+    await ob.enqueue(op(2, "a1"), "a1");                                       // result
+    await ob.enqueue(op(3, "a2", { entity: "photo" }), "a2", { lane: "files" }); // another audit's upload: not retried in this drain
+    await ob.enqueue(op(4, "a2"), "a2");
+    const s = await ob.drain();
+    expect(sent).toEqual([uuid(1), uuid(2), uuid(4)]);
+    expect(await statuses(ob)).toEqual(["failed", "confirmed", "pending", "confirmed"]);
+    expect(s.networkDown).toBe(false);          // the API itself is reachable
+    expect((await ob.list())[0]?.state).toMatchObject({ status: "failed", retryable: true });
+  });
+
+  it("a retryable failure in the data lane still stops everything (the API is unreachable)", async () => {
+    const sent: string[] = [];
+    const ob = mk({ send: async (o) => { sent.push(o.opId); throw new TransportError("network", "down", true); } });
+    await ob.enqueue(op(1, "a1"), "a1");
+    await ob.enqueue(op(2, "a1", { entity: "photo" }), "a1", { lane: "files" });
+    const s = await ob.drain();
+    expect(sent).toEqual([uuid(1)]);
+    expect(s.networkDown).toBe(true);
+  });
 });

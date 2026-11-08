@@ -26,6 +26,10 @@ export interface LocalAudit {
   templateId: string;
   createdBy: string;
   createdAt: string;
+  /** Set locally when the installer submits; the audit is then read-only on this device (the server enforces it too). */
+  submittedAt?: string;
+  /** Readiness as reported by the server after the submit synced (authoritative). */
+  serverState?: string;
 }
 
 export type LocalResult = "PASS" | "REVIEW" | "FAIL" | "NOT_ENTERED" | "OBSERVED" | "NOT_APPLICABLE";
@@ -55,9 +59,34 @@ export interface LocalItem {
   note?: string;
 }
 
+export interface LocalPhoto {
+  id: string;
+  auditId: string;
+  projectId: string;
+  /** null = an overall/room photo not tied to one checklist item. */
+  itemKey: string | null;
+  /** Compressed JPEG that gets uploaded. Removed from the device only after the server confirms the upload. */
+  blob?: Blob;
+  /** The untouched original, kept until the upload is confirmed (never delete unconfirmed evidence). */
+  originalBlob?: Blob;
+  /** Small data-URL preview, kept after the blobs are dropped. */
+  thumb: string;
+  mime: string;
+  bytes: number;
+  sha256: string;
+  capturedAt: string;
+  capturedBy: string;
+  storagePath: string;
+  confirmed: boolean;
+}
+
 export interface OutboxRecord {
   seq?: number;
   auditId: string;
+  /** Results/registrations ("data") and file uploads ("files") run in separate lanes so a stuck upload cannot block results. */
+  lane?: "data" | "files";
+  /** opIds that must be confirmed before this one may be sent. */
+  after?: string[];
   op: OperationEnvelope;
   state: ClientOpState;
   /** epoch ms; a failed-retryable op is not retried before this time. */

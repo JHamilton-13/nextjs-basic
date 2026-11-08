@@ -1,6 +1,7 @@
 # Database schema (Supabase Postgres) — Foundation + Pre-Install Audit
 
 Source of truth: `supabase/migrations/*.sql`. Tests: `supabase/tests/` (see `docs/testing/step2-database-results.md`).
+Migration 1000 (`confirm_photo` size check) is written and tested locally but NOT yet applied.
 Status: applied to Supabase project `zuyzxkkmsyuybbznelql` on 2026-11-08 (migrations 0100-0900); tested on local Postgres 16 and verified read-only on the real project.
 
 | Table | Purpose | Written by |

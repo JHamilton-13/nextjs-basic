@@ -34,8 +34,10 @@ export interface DrainSummary {
   blockedAudits: string[];
 }
 
-export function newOutboxRecord(op: OperationEnvelope, auditId: string): OutboxRecord {
-  return { auditId, op, state: newClientOp(op.opId), nextAttemptAt: 0 };
+export interface OutboxExtra { lane?: "data" | "files"; after?: string[] }
+
+export function newOutboxRecord(op: OperationEnvelope, auditId: string, extra: OutboxExtra = {}): OutboxRecord {
+  return { auditId, op, state: newClientOp(op.opId), nextAttemptAt: 0, ...(extra.lane ? { lane: extra.lane } : {}), ...(extra.after ? { after: extra.after } : {}) };
 }
 
 /**
@@ -55,8 +57,8 @@ export class Outbox {
     this.maxMs = opts.maxMs ?? 5 * 60 * 1000;
   }
 
-  async enqueue(op: OperationEnvelope, auditId: string): Promise<number> {
-    const seq = (await this.db.add("outbox", newOutboxRecord(op, auditId))) as number;
+  async enqueue(op: OperationEnvelope, auditId: string, extra: OutboxExtra = {}): Promise<number> {
+    const seq = (await this.db.add("outbox", newOutboxRecord(op, auditId, extra))) as number;
     this.opts.onChange?.();
     return seq;
   }
@@ -102,17 +104,27 @@ export class Outbox {
   private async run(o: { ignoreBackoff?: boolean }): Promise<DrainSummary> {
     const sum: DrainSummary = { confirmed: 0, failed: 0, conflicts: 0, networkDown: false, blockedAudits: [] };
     const blocked = new Set<string>();
-    const block = (a: string) => { if (!blocked.has(a)) { blocked.add(a); sum.blockedAudits.push(a); } };
+    const all = await this.list();
+    const statusOf = new Map(all.map((r) => [r.op.opId, r.state] as const));
+    let filesDown = false; // a retryable failure while uploading pauses ALL uploads for this drain, but not results
 
-    for (let rec of await this.list()) {
+    for (let rec of all) {
+      const lane = `${rec.auditId}:${rec.lane ?? "data"}`;
+      const block = () => { if (!blocked.has(lane)) { blocked.add(lane); if (!sum.blockedAudits.includes(rec.auditId)) sum.blockedAudits.push(rec.auditId); } };
       const st = rec.state;
       if (st.status === "confirmed") continue;
-      if (blocked.has(rec.auditId)) continue;
-      if (st.status === "conflict" || (st.status === "failed" && st.retryable === false)) { block(rec.auditId); continue; }
+      if (blocked.has(lane)) continue;
+      if (st.status === "conflict" || (st.status === "failed" && st.retryable === false)) { block(); continue; }
       if (this.opts.canSend && !this.opts.canSend(rec.op.actor)) continue;
+      if (filesDown && rec.lane === "files") continue;
+
+      // Dependencies (e.g. upload after the photo is registered): wait for them; if one can never succeed, this one is stuck too.
+      const deps = (rec.after ?? []).map((id) => statusOf.get(id));
+      if (deps.some((d) => !d || d.status === "conflict" || (d.status === "failed" && d.retryable === false))) { block(); continue; }
+      if (deps.some((d) => d && d.status !== "confirmed")) continue;
 
       if (st.status === "failed") {
-        if (!o.ignoreBackoff && rec.nextAttemptAt > this.now()) { block(rec.auditId); continue; }
+        if (!o.ignoreBackoff && rec.nextAttemptAt > this.now()) { block(); continue; }
         rec = await this.transition(rec, { type: "retry" });
       }
       if (rec.state.status !== "pending") continue;
@@ -125,19 +137,25 @@ export class Outbox {
         const te = e instanceof TransportError ? e : new TransportError("network", e instanceof Error ? e.message : String(e), true);
         if (te.retryable) {
           const attemptsAfter = rec.state.attempts + 1;
-          await this.transition(rec, { type: "network_error", message: te.message }, { nextAttemptAt: this.now() + nextRetryDelayMs(attemptsAfter - 1, { baseMs: this.baseMs, maxMs: this.maxMs }) });
-          sum.failed++; sum.networkDown = true;
-          break; // transport is down: stop, keep order, try again later
+          const failed = await this.transition(rec, { type: "network_error", message: te.message }, { nextAttemptAt: this.now() + nextRetryDelayMs(attemptsAfter - 1, { baseMs: this.baseMs, maxMs: this.maxMs }) });
+          statusOf.set(failed.op.opId, failed.state);
+          sum.failed++;
+          if (rec.lane === "files") { filesDown = true; block(); continue; } // storage trouble only: keep sending results
+          sum.networkDown = true;
+          break; // the API is unreachable: stop, keep order, try again later
         }
-        await this.transition(rec, { type: "server_rejected", message: te.message });
-        sum.failed++; block(rec.auditId);
+        const done = await this.transition(rec, { type: "server_rejected", message: te.message });
+        statusOf.set(done.op.opId, done.state);
+        sum.failed++; block();
         continue;
       }
 
       const eff = outcome.status === "duplicate" ? outcome.original : outcome;
-      if (eff.status === "applied") { await this.transition(rec, { type: "server_confirmed" }); sum.confirmed++; }
-      else if (eff.status === "conflict") { await this.transition(rec, { type: "server_conflict", currentVersion: eff.currentVersion }); sum.conflicts++; block(rec.auditId); }
-      else { await this.transition(rec, { type: "server_rejected", message: eff.message }); sum.failed++; block(rec.auditId); }
+      let done: OutboxRecord;
+      if (eff.status === "applied") { done = await this.transition(rec, { type: "server_confirmed" }); sum.confirmed++; }
+      else if (eff.status === "conflict") { done = await this.transition(rec, { type: "server_conflict", currentVersion: eff.currentVersion }); sum.conflicts++; block(); }
+      else { done = await this.transition(rec, { type: "server_rejected", message: eff.message }); sum.failed++; block(); }
+      statusOf.set(done.op.opId, done.state);
     }
     return sum;
   }

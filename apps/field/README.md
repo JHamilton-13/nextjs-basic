@@ -9,10 +9,14 @@ service worker via `vite-plugin-pwa`; Supabase Auth + the `apply_op` RPC for syn
 - With no connection: start an audit, enter wall-length / ceiling-height measurements (inches-fractions, feet-inches, mm), see a live PASS/REVIEW/FAIL from the template's rule data, and queue everything.
 - Durable outbox: written to IndexedDB before any network call; sent in order; retried with backoff; resumable after reload/crash; only shown as "synced" after the server confirms.
 - After sync the server's recomputed result replaces the provisional one.
+- Check items (pass / fail / review / N/A), observation items, and the 8 critical MEP rough-in items, with each item's evidence rules enforced before saving (photo count, note, drawing reference).
+- Photos: camera capture, JPEG compression (2048 px, quality 0.8), SHA-256, durable register -> upload -> confirm queue; the original stays on the phone until the upload is confirmed.
+- Critical MEP FAIL flags the audit NOT READY at once. Submit shows warnings (items with no result, critical items never checked) but is never blocked; after submit the audit is read-only here.
+- Readiness comes from the server once the submit has synced; until then it is computed on the device with the same rules.
 
-## Not in this slice (shown as "next step" or absent)
-Photos, check/observation items (listed read-only), MEP stop-gate UI, submit/release/override screens, drawings, conflict resolution UI,
-background sync (iOS has none: the queue drains when the app is opened/foregrounded), push notifications.
+## Not built yet
+Revising a submitted audit, manager release/override screens (dashboard), photo annotation, drawings, conflict resolution UI, an in-app
+notification inbox, supervisor approval, background sync (iOS has none: the queue drains when the app is opened/foregrounded), push notifications.
 
 ## Run
 ```bash
@@ -24,7 +28,7 @@ npm run build -w @phc/field && npm run preview -w @phc/field   # service worker 
 Add the dev/preview URL to Supabase > Authentication > URL Configuration for Google sign-in redirects.
 
 ## Tests
-- `npm test -w @phc/field` — outbox (13) and audit/measurement logic (10) against fake-indexeddb.
+- `npm test -w @phc/field` — outbox (lanes, dependencies, backoff, recovery), audits, photos, checks, submit, readiness against fake-indexeddb.
 - `npm run e2e -w @phc/field` — real Chromium + service worker + IndexedDB with the network switched off, against a local mock of Supabase
   (`e2e/mock-server.ts`, which reuses the domain package's reference model of `apply_op` and the real example template). It cannot test real
   sign-in (needs an emailed code) or a real phone.

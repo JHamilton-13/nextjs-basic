@@ -18,9 +18,12 @@ Last updated: 2026-11-08
 ## Completed (Step 3)
 - `apps/field` installable PWA: sign-in UI (Google + email code), offline cache of projects/rooms/templates, start audit offline, tolerance measurement with live PASS/REVIEW/FAIL, durable ordered outbox with backoff and recovery, server-confirmed sync, sync/queue screen. 23 unit tests + 23-check offline Playwright run, typecheck clean. See `docs/testing/step3-pwa-results.md` and `apps/field/README.md`.
 
+## Completed (Step 4, 2026-11-08: finish the installer audit — AWAITING OWNER REVIEW)
+- Photos (capture, compress, durable queue with register/upload/confirm), check/observation/MEP item entry with server-mirrored evidence rules, critical-fail banner, submit with warnings (no gating, per owner), read-only after submit, server-confirmed readiness, separate upload lane. 45 field unit tests + 43-check offline Playwright run. Migration 1000 (`confirm_photo` size check) written/tested locally, **NOT applied**. See `docs/testing/step4-complete-audit-results.md`.
+
 ## Not started
 - `packages/integration-contract` is a bare `package.json` stub. `apps/web` is still the unmodified Next.js starter (relocated); the manager dashboard is not built.
-- PWA: photos, check/observation/MEP entry, submit/release/override screens, conflict resolution, real-device trial.
+- PWA: revise a submitted audit (server function exists), photo markup/annotation, in-app notifications inbox, conflict resolution screen, real-device trial. Manager release/override screens and dashboard (apps/web).
 - Enabling the auth hook, Google/email OTP setup, first-admin bootstrap (steps in `supabase/README.md`); inserting the company's real audit template.
 
 ## Blockers
