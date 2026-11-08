@@ -32,7 +32,7 @@ async function waitFor(fn, what, ms = 15000) { const t = Date.now(); for (;;) { 
     browser = await chromium.launch();
     const context = await browser.newContext({ ...devices["iPhone 13"], serviceWorkers: "allow" });
     const session = { access_token: "test-token", token_type: "bearer", expires_in: 3600, expires_at: Math.floor(Date.now() / 1000) + 3600, refresh_token: "r", user: { id: USER, aud: "authenticated", email: "installer@phc.test", app_metadata: {}, user_metadata: { full_name: "Pat Installer" }, created_at: "2026-11-08T00:00:00Z" } };
-    await context.addInitScript((s) => { if (!localStorage.getItem("phc-auth")) localStorage.setItem("phc-auth", JSON.stringify(s)); }, session);
+    await context.addInitScript((s) => { if (!localStorage.getItem("phc-auth") && !localStorage.getItem("test-no-autologin")) localStorage.setItem("phc-auth", JSON.stringify(s)); }, session);
     const page = await context.newPage();
     page.on("pageerror", (e) => console.log("  [pageerror]", e.message));
     await page.goto(APP);
@@ -64,6 +64,60 @@ async function waitFor(fn, what, ms = 15000) { const t = Date.now(); for (;;) { 
     await page.getByRole("button", { name: "Sync queue" }).tap();
     const queueText = await page.getByTestId("queue-row").allInnerTexts();
     check(queueText.some((t) => t.includes("Room checklist")) && queueText.some((t) => t.includes("Issue") && t.includes("raised")), "installer build: the Sync queue describes the tick as 'Room checklist' and the issue as 'Issue ... raised'");
+
+    // ---- signing out and back in: the phone must never get stuck ----
+    console.log("== sign out / sign in");
+    const idb = (store, key) => page.evaluate(([st, k]) => new Promise((res) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction(st).objectStore(st).get(k); q.onsuccess = () => res(q.result ?? null); }; }), [store, key]);
+    const outboxLen = () => page.evaluate(() => new Promise((res) => { const r = indexedDB.open("phc-field"); r.onsuccess = () => { const q = r.result.transaction("outbox").objectStore("outbox").getAll(); q.onsuccess = () => res(q.result.filter((x) => x.state.status !== "confirmed").length); }; }));
+    const signInButton = page.getByRole("button", { name: "Continue with Google" });
+    const goToKitchen = async () => { await page.getByTestId("project-card").waitFor(); await page.getByTestId("open-project").tap(); await page.locator('[data-room="Kitchen"]').waitFor(); };
+
+    await page.getByRole("button", { name: "Projects", exact: true }).tap();
+    await goToKitchen();
+    await context.setOffline(true);
+    await kitchen.getByTestId("pill-shelves").tap();
+    await waitFor(async () => (await outboxLen()) > 0, "an unsent change");
+    await page.getByTestId("signout").tap();
+    check((await page.getByTestId("signout-dialog").innerText()).includes("still waiting to send"), "sign out with unsent work asks first and says the work stays on the phone");
+    await page.getByTestId("signout-cancel").tap();
+    check((await page.getByTestId("signout-dialog").count()) === 0 && (await idb("meta", "identity")) !== null, "'Stay signed in' keeps you signed in");
+    await page.getByTestId("signout").tap();
+    await page.getByTestId("signout-confirm").tap();
+    await signInButton.waitFor();
+    check(true, "after signing out the sign-in screen appears (even with no connection)");
+    check((await idb("meta", "identity")) === null && (await outboxLen()) > 0, "the saved identity is forgotten but the unsent change is still on the phone");
+
+    await context.setOffline(false);
+    await page.evaluate(() => localStorage.setItem("test-no-autologin", "1"));   // the test harness otherwise signs every reload back in
+    await page.reload();
+    await signInButton.waitFor();
+    check(true, "still signed out after a reload (not silently signed back in)");
+    await page.evaluate((s) => localStorage.setItem("phc-auth", JSON.stringify(s)), session);   // stands in for completing Google sign-in
+    await page.reload();
+    await goToKitchen();
+    await waitFor(async () => (await page.locator('[data-room="Kitchen"]').getByTestId("pill-shelves").getAttribute("data-pending")) === "no", "the change sent after signing back in", 25000);
+    check((await (await fetch(`${MOCK}/__state`)).json()).log.some((l) => l.entity === "room_check" && l.outcome === "applied" && String(l.entityId).endsWith(":shelves")), "after signing back in, the change made before signing out reached the server");
+
+    // the stuck state from the owner's phone: the session is gone but the saved identity is still there
+    await page.evaluate(() => { localStorage.setItem("test-no-autologin", "1"); localStorage.removeItem("phc-auth"); });
+    await page.reload();
+    await page.getByTestId("project-card").waitFor();
+    check(await page.getByTestId("resign").isVisible(), "session gone: the header offers a real 'Sign in again to sync' button");
+    const [authReq] = await Promise.all([page.waitForRequest((r) => r.url().includes("/auth/v1/authorize")), page.getByTestId("resign").tap()]);
+    check(authReq.url().includes("provider=google") && authReq.url().includes(encodeURIComponent(APP)), "tapping it starts Google sign-in and returns to this app");
+    await page.goto(APP);
+    await page.getByTestId("project-card").waitFor();
+    await page.getByTestId("signout").tap();
+    await signInButton.waitFor();
+    check(true, "session gone: Sign out takes you to the sign-in screen (it used to do nothing)");
+
+    // signing out on an online phone ends only this phone's session
+    await page.evaluate((s) => { localStorage.removeItem("test-no-autologin"); localStorage.setItem("phc-auth", JSON.stringify(s)); }, session);
+    await page.reload();
+    await page.getByTestId("project-card").waitFor();
+    await page.getByTestId("signout").tap();
+    await signInButton.waitFor();
+    check((await (await fetch(`${MOCK}/__state`)).json()).log.some((l) => l.entity === "auth_logout" && l.scope === "local"), "signing out asks the server to end only this phone's session (not every device)");
   } finally { await browser?.close().catch(() => {}); killAll(); }
   const bad = results.filter((r) => !r.ok);
   if (problems.length) { console.log(`\nINSTALLER VIEW CHECKS FAILED: ${problems.length}`); process.exit(1); }

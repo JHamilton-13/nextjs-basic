@@ -100,3 +100,5 @@ summary::before { content: "▸"; display: inline-block; width: 1.1em; transitio
 .cat.on { border-color: var(--charcoal); background: var(--charcoal); color: #fff; } .cat.on small { color: #d8d8d8; }
 .sheet textarea { display: block; width: 100%; margin-top: .25rem; padding: .5rem .75rem; font: inherit; border: 1px solid #aab1bc; border-radius: 8px; background: #fff; }
 .issue-card .panel select { display: block; width: 100%; min-height: 48px; margin-top: .25rem; font: inherit; }
+
+.signout-confirm { width: 100%; background: #fff; color: var(--ink); border-radius: 12px; padding: .75rem; margin-top: .25rem; } .signout-confirm p { margin: 0 0 .5rem; }

@@ -105,6 +105,8 @@ http.createServer((req, res) => {
     if (url.pathname === "/__rows") return send(res, 200, Object.fromEntries(rows));
     if (down) { res.destroy(); return; }
     if (hang) { return; } // accept the connection and never answer: the "Wi-Fi without internet" case
+    if (url.pathname === "/auth/v1/logout") { plog("auth_logout", { scope: url.searchParams.get("scope") ?? "global" }); res.writeHead(204, cors); return void res.end(); }
+    if (url.pathname === "/auth/v1/authorize") { plog("auth_authorize", { provider: url.searchParams.get("provider") ?? "", redirect_to: url.searchParams.get("redirect_to") ?? "" }); res.writeHead(200, { ...cors, "content-type": "text/html" }); return void res.end("<html><body>mock sign-in</body></html>"); }
     if (url.pathname.startsWith("/auth/v1/user")) return send(res, 200, { id: USER, aud: "authenticated", email: "installer@phc.test" });
     if (url.pathname.startsWith("/auth/v1/token")) return send(res, 200, { access_token: TOKEN, token_type: "bearer", expires_in: 3600, refresh_token: "r2", user: { id: USER, email: "installer@phc.test" } });
     if (req.headers.authorization !== `Bearer ${TOKEN}`) return send(res, 401, { code: "PGRST301", message: "JWT expired" });

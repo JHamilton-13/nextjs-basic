@@ -60,6 +60,7 @@ export function openPhcDb(name = "phc-field"): Promise<Db> {
 
 export const getIdentity = async (db: Db): Promise<Identity | undefined> => (await db.get("meta", "identity")) as Identity | undefined;
 export const setIdentity = (db: Db, i: Identity) => db.put("meta", i, "identity");
+export const clearIdentity = (db: Db) => db.delete("meta", "identity");
 
 /** Replace the cached read-only reference data (projects the user belongs to, their rooms, active templates). */
 export async function replaceCache(db: Db, data: { projects: ProjectRow[]; rooms: RoomRow[]; templates: TemplateRow[]; trades?: TradeRow[] }) {

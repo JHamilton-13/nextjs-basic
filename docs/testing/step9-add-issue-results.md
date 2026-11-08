@@ -36,3 +36,9 @@ Phone suite coverage per device: another installer's issue visible with a downlo
 - Marking up a photo is available on the issue card after the issue is saved, not inside the Add Issue sheet (the photo is not stored until the issue is saved). The spec listed Mark up in the sheet; this is a small deviation.
 - A server refusal ("needs attention" with the reason) is covered by unit tests and the plain-words mapping, but no end-to-end test forces a refusal.
 - Part requests, the manager screens (builder contact, trade list editing), the report PDF and sending are later steps.
+
+## Fix after the phone trial: could not sign in or out (reported 2026-11-08)
+Symptom: the app stayed open showing "Sign in again to sync", Sign out did nothing, there was no way to sign in.
+Cause (found in the Supabase auth logs and the code): the Sign out button ended the session on EVERY device (`/auth/v1/logout?scope=global`), and the identity the app keeps for offline use was never forgotten, so the sign-in screen never came back; "Sign in again to sync" was text, not a button. No sign-in attempt ever reached Supabase afterwards.
+Fix: Sign out ends only this phone's session and always works (no connection needed) and forgets the saved identity; if changes are still waiting to send it asks first and says they stay on the phone; "Sign in again to sync" is now a real button that starts Google sign-in.
+Tests: `apps/field/test/auth.test.ts` (4; with the old behaviour put back, 3 of them fail), 10 new real-build checks (sign out with unsent work, stay signed in, sign-in screen offline, work survives and sends after signing back in, the stuck state, sign-in button starts Google sign-in, local-only sign out). Results: app unit tests 123 pass; real-build checks 20 pass; offline suite 80 pass; iPhone SE emulation 99 pass.

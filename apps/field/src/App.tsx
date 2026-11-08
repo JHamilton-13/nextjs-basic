@@ -3,7 +3,7 @@ import { openPhcDb, type Db } from "./lib/db";
 import { Outbox } from "./lib/outbox";
 import { supabase, configured } from "./lib/supabase";
 import { supabaseTransport } from "./lib/transport";
-import { resolveIdentity } from "./lib/auth";
+import { resolveIdentity, signInWithGoogle, signOutLocally } from "./lib/auth";
 import { syncNow, type SyncResult } from "./lib/sync";
 import { requestPersistence } from "./lib/storage";
 import type { Identity } from "./lib/types";
@@ -20,6 +20,10 @@ export type View = { name: "projects" } | { name: "project"; projectId: string }
 export interface AppCtx {
   db: Db; outbox: Outbox; identity: Identity; tick: number; online: boolean; syncing: boolean; hasSession: boolean;
   lastSync: SyncResult | undefined; sync: (force?: boolean) => Promise<void>; go: (v: View) => void;
+  /** Ends this phone's session and returns to the sign-in screen; queued changes stay on the phone. */
+  signOut: () => Promise<void>;
+  /** Starts a new sign-in (needs a connection). Returns an error message, or null when the redirect has started. */
+  signIn: () => Promise<string | null>;
 }
 
 export function App() {
@@ -83,7 +87,9 @@ export function App() {
   if (!db || !outbox) return <main className="screen"><p>Loading…</p></main>;
   if (!identity) return <SignIn />;
 
-  const ctx: AppCtx = { db, outbox, identity, tick, online, syncing, hasSession, lastSync, sync, go: setView };
+  const signOut = async () => { await signOutLocally(supabase, db); setIdentity(undefined); setHasSession(false); setView({ name: "projects" }); };
+  const signIn = async () => (supabase ? signInWithGoogle(supabase) : "Not configured");
+  const ctx: AppCtx = { db, outbox, identity, tick, online, syncing, hasSession, lastSync, sync, go: setView, signOut, signIn };
   return (
     <div className="app">
       <StatusBar ctx={ctx} />

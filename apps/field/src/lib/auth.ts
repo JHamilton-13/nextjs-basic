@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Db } from "./db";
-import { getIdentity, setIdentity } from "./db";
+import { clearIdentity, getIdentity, setIdentity } from "./db";
 import type { Identity } from "./types";
 
 /** Email one-time code. shouldCreateUser stays true: first sign-in of an invited person creates the account, and the
@@ -18,6 +18,17 @@ export async function verifyCode(sb: SupabaseClient, email: string, token: strin
 export async function signInWithGoogle(sb: SupabaseClient): Promise<string | null> {
   const { error } = await sb.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
   return error ? friendly(error.message) : null;
+}
+
+/**
+ * Sign out of THIS phone, always. Two things used to go wrong: the default sign-out ends every session of the person on every
+ * device, and the identity saved for offline use was never forgotten, so the app stayed open with no way to sign in again.
+ * Here only this phone's session is ended (any failure, including no connection, is ignored) and the saved identity is
+ * forgotten so the sign-in screen appears. Nothing the person did is deleted: queued changes stay and send after the next sign-in.
+ */
+export async function signOutLocally(sb: SupabaseClient | null, db: Db): Promise<void> {
+  try { await sb?.auth.signOut({ scope: "local" }); } catch { /* ending the local session must not depend on the network */ }
+  await clearIdentity(db);
 }
 
 const friendly = (m: string) => (/not been invited/i.test(m) ? "This email has not been invited. Ask your project manager to invite you." : m);
