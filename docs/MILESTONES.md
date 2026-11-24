@@ -74,8 +74,8 @@ Reports screen in `apps/field` (managers only), server function `api/reports.mjs
 ## Step 13: collapsible rooms, build on open, keep latest sent/printed report, Cockpit mapping (built and tested; migration 1800 APPLIED 2026-11-08)
 `docs/testing/step13-keep-latest-collapse-cockpit-results.md`. Applied and verified live: `printed_at`/`printed_by` on `reports`, `projects.contact_source`, storage delete policy `reports_obj_delete`, `mark_report_printed` and `prune_reports` (authenticated only, not anon), `authenticated` still SELECT-only on `reports`. The 4 trial reports (unsaved previews) are removed by the first build.
 
-## Step 14: report builder, colleague sharing, eraser, archived originals (built and tested; MIGRATION 1900 NOT APPLIED)
-`docs/testing/step14-report-builder-results.md`. Needs `PHC_EMAIL_DOMAIN` in Vercel for sharing. Do not use the live Reports screen until 1900 is applied.
+## Step 14: report builder, colleague sharing, eraser, archived originals (built and tested; migration 1900 APPLIED 2026-11-24)
+`docs/testing/step14-report-builder-results.md`. Needs `PHC_EMAIL_DOMAIN` in Vercel for sharing. Applied and verified live: report types service/custom, `options`, `shared_by/shared_at/shared_to`, one `create_report` (6 arguments), `mark_report_shared`, updated `prune_reports` (authenticated only, not anon); `authenticated` still SELECT-only on `reports`.
 
 ## Technical debt / notes
 - Decimal-inch and mm inputs round to nearest 1/64"; fraction denominators limited to 2..64 (powers of two).

@@ -1,6 +1,6 @@
 # Step 14: user-built reports, sharing with colleagues, eraser, archived originals
 
-Date: 2026-11-08. All data is fake. **Migration 1900 is written and tested locally but NOT applied (awaiting owner approval).** Do not use the live Reports screen before it is applied: the screen sends options and calls `mark_report_shared`, which do not exist yet.
+Date: 2026-11-08. All data is fake. **Migration 1900 was applied to project `zuyzxkkmsyuybbznelql` on 2026-11-24 after owner approval.** Live check: four new `reports` columns (`options`, `shared_by`, `shared_at`, `shared_to`); type check now allows builder_site_audit, room_status, service, custom; exactly one `create_report` (6 arguments); `create_report`, `mark_report_shared`, `prune_reports` executable by `authenticated` and not `anon`; `authenticated` still SELECT-only on `reports`; 2 report rows present, untouched. Security advisor: only the expected SECURITY DEFINER notice for the functions.
 
 ## Owner requests and what was done
 | Request | Done |
@@ -30,7 +30,7 @@ Originals: keep, hide in app. Coworkers: typed addresses ending in the PHC domai
 | Offline | 81 passed on re-run. The first run in the full sequence failed once ("the issue is saved on the phone and shows waiting to sync"); it passed when run alone straight afterwards, so I am treating it as a timing flake and have not changed that test |
 
 ## Not done / not verified
-- Migration 1900 not applied; the new database functions have not run against real Supabase.
+- The new database functions have not yet run for real (needs a manager session): trial steps 20 to 26 check them.
 - Native phone Share sheet not added (it cannot say who received it, so it would not fit the keep-the-latest rule); sharing is by email.
 - "Room status with open items" assumes the status report should also list open service items; change the preset if you want it different.
 - The eraser fix is not proven on your phone: please check the app version on the Sync queue screen first.
