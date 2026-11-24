@@ -1,0 +1,1 @@
+Report assets (logo, fonts).

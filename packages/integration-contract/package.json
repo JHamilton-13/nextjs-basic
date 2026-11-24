@@ -1,0 +1,6 @@
+{
+  "name": "@phc/integration-contract",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Event schemas and mock server for Cockpit/Warehouse Tracker. Not implemented yet; mock only, never calls production."
+}
